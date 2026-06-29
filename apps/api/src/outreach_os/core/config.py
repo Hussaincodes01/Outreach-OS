@@ -1,0 +1,227 @@
+"""Application configuration via pydantic-settings.
+
+Reads from environment / .env. All settings are validated at import time.
+"""
+from __future__ import annotations
+
+from functools import lru_cache
+from typing import Literal
+
+from pydantic import Field, SecretStr
+from pydantic_settings import BaseSettings, SettingsConfigDict
+
+
+class Settings(BaseSettings):
+    model_config = SettingsConfigDict(
+        env_file=".env",
+        env_file_encoding="utf-8",
+        case_sensitive=False,
+        extra="ignore",
+    )
+
+    # --- Core ---
+    environment: Literal["development", "staging", "production", "ci", "test"] = "development"
+    log_level: str = "INFO"
+    sentry_dsn: SecretStr | None = None
+
+    # --- Database ---
+    database_url: str = Field(
+        default="postgresql+asyncpg://outreach:outreach@localhost:5432/outreach",
+        description="Async SQLAlchemy URL for the main app database.",
+    )
+    database_url_sync: str = Field(
+        default="postgresql://outreach:outreach@localhost:5432/outreach",
+        description="Sync URL (used by Alembic via async driver compatibility shim).",
+    )
+    database_pool_size: int = 10
+    database_max_overflow: int = 5
+
+    # --- Redis / Celery ---
+    redis_url: str = "redis://localhost:6379/0"
+    celery_broker_url: str = "redis://localhost:6379/1"
+    celery_result_backend: str = "redis://localhost:6379/2"
+
+    # --- Auth ---
+    jwt_secret: SecretStr = Field(default=SecretStr("change-me"))
+    # JSON dict of kid->secret for key rotation, e.g. '{"1": "secret1", "2": "secret2"}'
+    jwt_secret_keys: SecretStr | None = None
+    # Active key ID for signing new tokens (must exist in jwt_secret_keys)
+    jwt_active_key_id: str = "1"
+    jwt_alg: str = "HS256"
+    jwt_access_ttl_minutes: int = 15
+    jwt_refresh_ttl_days: int = 30
+
+    # --- Vault ---
+    # 32-byte Fernet key, base64-encoded. Generate with `openssl rand -base64 32`.
+    vault_master_key: SecretStr = Field(default=SecretStr(""))
+
+    # --- OAuth: Google ---
+    google_oauth_client_id: str = ""
+    google_oauth_client_secret: SecretStr = SecretStr("")
+    google_oauth_redirect_uri: str = (
+        "http://localhost:8000/v1/mailboxes/oauth/gmail/callback"
+    )
+    google_oauth_scopes: str = (
+        "https://www.googleapis.com/auth/gmail.send,"
+        "https://www.googleapis.com/auth/gmail.readonly,"
+        "https://www.googleapis.com/auth/calendar.events"
+    )
+
+    # --- OAuth: Microsoft ---
+    microsoft_oauth_client_id: str = ""
+    microsoft_oauth_client_secret: SecretStr = SecretStr("")
+    microsoft_oauth_redirect_uri: str = (
+        "http://localhost:8000/v1/mailboxes/oauth/outlook/callback"
+    )
+    microsoft_oauth_tenant: str = "common"
+    microsoft_oauth_scopes: str = (
+        "offline_access "
+        "https://graph.microsoft.com/Mail.Send "
+        "https://graph.microsoft.com/Mail.ReadWrite "
+        "https://graph.microsoft.com/Calendars.ReadWrite"
+    )
+
+    # --- S3 ---
+    s3_endpoint_url: str | None = "http://localhost:9000"
+    s3_bucket: str = "outreach"
+    s3_access_key: str = "minioadmin"
+    s3_secret_key: SecretStr = SecretStr("minioadmin")
+    s3_region: str = "us-east-1"
+
+    # --- SMTP (transactional, e.g. magic-link login) ---
+    smtp_host: str = "localhost"
+    smtp_port: int = 1025
+    smtp_username: str = ""
+    smtp_password: SecretStr = SecretStr("")
+    smtp_use_tls: bool = False
+
+    # --- Phase 2: Lead scraping ---
+    # Per-tenant, per-source rate limits (requests per minute). Source names
+    # not listed here fall back to defaults in `core.rate_limit.DEFAULT_LIMITS`.
+    scraping_rate_limits_per_minute: dict[str, int] = Field(default_factory=dict)
+    # HTTP timeouts (seconds) for outbound scraping calls.
+    scraping_http_timeout: float = 20.0
+    # Maximum seconds a single scraping_job may run before being marked failed.
+    scraping_job_timeout: int = 600
+    # Celery — when true, tasks run synchronously inside the calling process
+    # (used by tests; do not enable in production).
+    celery_task_always_eager: bool = False
+
+    # --- Phase 3: LangGraph agent ---
+    # Default LLM model in LiteLLM format, e.g. "openai/gpt-4o-mini" or
+    # "anthropic/claude-3-5-sonnet-20240620". The campaign row can override.
+    llm_default_model: str = "openai/gpt-4o-mini"
+    # Embedding model in LiteLLM format. Default 1536-dim (text-embedding-3-small).
+    llm_embedding_model: str = "openai/text-embedding-3-small"
+    llm_embedding_dimensions: int = 1536
+    # Max tokens per completion for the draft node.
+    llm_draft_max_tokens: int = 800
+    # Max tokens for niche/style classification nodes (short structured output).
+    llm_classify_max_tokens: int = 300
+    # Timeout (seconds) for any single LLM call.
+    llm_request_timeout: int = 60
+    # Chunk size (tokens) for RAG case-study splitting.
+    rag_chunk_tokens: int = 400
+    rag_chunk_overlap_tokens: int = 60
+    # Top-k chunks retrieved per draft.
+    rag_top_k: int = 4
+    # Minimum similarity score (cosine, 0..1) for a chunk to be included.
+    rag_min_similarity: float = 0.65
+    # Max seconds a single draft-generation run may take before timing out.
+    agent_run_timeout: int = 180
+    # Default presigned-URL TTL (seconds) for draft S3 links.
+    s3_presign_ttl: int = 900
+    # Convenience bucket for drafts (separate from the general S3 bucket).
+    s3_drafts_bucket: str = "outreach-drafts"
+
+    # --- Phase 4: send + reply + follow-up ---
+    # Default send window. 7am-7pm local; we don't have a timezone per
+    # lead yet, so we use the server's local time. Per-tenant override
+    # is a future concern.
+    send_window_start_hour: int = 7
+    send_window_end_hour: int = 19
+    # Per-send jitter (in seconds) — added on top of scheduled_at to avoid
+    # bursts. 0 means no jitter.
+    send_jitter_seconds: int = 60
+    # Cap per mailbox per local day. Mailbox.daily_send_cap overrides this.
+    default_daily_send_cap: int = 50
+    # How many sends a single send_due Celery pass may fire (rate limiter).
+    send_batch_size: int = 25
+    # Reply classifier LLM temperature (low — we want deterministic labels).
+    reply_classify_temperature: float = 0.0
+    # How many seconds to wait between follow-up steps by default.
+    default_step_delay_days: int = 3
+    # Celery beat interval (seconds) for the send_due + follow_up_due tasks.
+    send_due_interval_seconds: int = 60
+    follow_up_due_interval_seconds: int = 60
+    # Stop the sequence after this many classification types.
+    stop_on_replies: tuple[str, ...] = ("positive", "negative", "unsubscribe", "bounce")
+    # Public base URL for tracking pixels and unsubscribe links.
+    public_base_url: str = "http://localhost:8000"
+    # Disclosure line appended to every outbound email (CAN-SPAM, GDPR).
+    email_disclosure: str = (
+        "This email was sent by Outreach OS on behalf of the sender. "
+        "If you'd rather not hear from us, click unsubscribe."
+    )
+    # Inbound webhook shared secret (HMAC-SHA256 over the body).
+    # MUST be set in production .env (no default for security).
+    inbound_webhook_secret: str = ""
+    # Auth rate limits (per IP per minute). Override via env.
+    auth_rate_limits_per_minute: dict[str, int] = Field(default_factory=dict)
+
+    # --- Phase 5: meeting booking + CRM sync ---
+    # Default meeting duration in minutes when creating proposals.
+    meeting_default_duration_minutes: int = 30
+    # Slot 1 time-of-day (UTC) used when generating the 3 default slots.
+    meeting_default_slot_hour_utc: int = 10
+    # How many working-day slots to propose (master plan: 3).
+    meeting_proposed_slot_count: int = 3
+    # Supported CRM providers in V1.
+    crm_supported_providers: tuple[str, ...] = ("google_sheets",)
+
+    # --- Phase 6: notifications ---
+    # Master list of all event keys the notification system can emit.
+    # Adding a new one is just appending to this tuple (and the UI
+    # auto-discovers the key from /v1/notifications/events).
+    notification_event_keys: tuple[str, ...] = (
+        "reply.positive",
+        "reply.negative",
+        "reply.unsubscribe",
+        "reply.bounce",
+        "meeting.proposed",
+        "meeting.confirmed",
+        "meeting.declined",
+        "meeting.cancelled",
+        "send.failed",
+        "send.bounced",
+        "campaign.error",
+        "scraping.completed",
+        "scraping.failed",
+        "crm.sync.failed",
+    )
+    # Default channels when a tenant has no NotificationPreference row yet.
+    # Always allow in-app; everything else is opt-in.
+    notification_default_channel_in_app: bool = True
+    notification_default_channel_email_digest: bool = False
+    notification_default_channel_slack: bool = False
+    # Cron interval (seconds) for the daily email digest Celery beat.
+    notification_email_digest_interval_seconds: int = 60
+    # Stub Slack delivery latency in tests.
+    notification_slack_request_timeout: int = 5
+
+    # --- Phase 7: billing ---
+    # "stub" or "stripe". In dev/test we use stub (no external calls).
+    billing_provider: Literal["stub", "stripe"] = "stub"
+    stripe_secret_key: SecretStr = SecretStr("")
+    stripe_webhook_secret: SecretStr = SecretStr("")
+    # Cron interval (seconds) for the monthly usage rollup.
+    billing_rollup_interval_seconds: int = 3600
+
+
+# Helper alias for the schema layer (so the OpenAPI doc is clean).
+NotificationEventKey = str
+
+
+@lru_cache(maxsize=1)
+def get_settings() -> Settings:
+    return Settings()

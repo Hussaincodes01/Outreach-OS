@@ -1,0 +1,64 @@
+# Secrets and local environment
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.p12
+*.pfx
+
+# Dependencies
+node_modules/
+.pnpm-store/
+.yarn/
+.pnp.*
+
+# Python
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# Next.js / frontend
+.next/
+out/
+dist/
+build/
+*.tsbuildinfo
+
+# Logs and local process files
+*.log
+*.err.log
+*.pid
+diag_out.txt
+
+# Reports and generated artifacts
+bandit_report.json
+coverage/
+reports/
+
+# OS and editor
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+.claude/
+
+# Local data
+*.db
+*.sqlite
+*.sqlite3
+data/
+tmp/
+temp/
+
+# Stale local agent bundles
+Marcus/
+
+# Internal planning prompts
+03-STRUCTURING-PROMPT.md

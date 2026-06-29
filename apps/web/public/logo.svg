@@ -1,0 +1,17 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" fill="none" stroke="currentColor" stroke-width="10" stroke-linecap="round" stroke-linejoin="round" aria-label="Outreach OS">
+  <title>Outreach OS</title>
+  <!-- Meteor head: thick double-ring on the right -->
+  <circle cx="180" cy="128" r="68" />
+  <circle cx="180" cy="128" r="44" />
+  <!-- Speed lines (horizontal streaks, longer closer to the head) -->
+  <line x1="32"  y1="72"  x2="116" y2="72"  />
+  <line x1="12"  y1="100" x2="140" y2="100" />
+  <line x1="44"  y1="128" x2="160" y2="128" />
+  <line x1="20"  y1="156" x2="132" y2="156" />
+  <line x1="56"  y1="184" x2="112" y2="184" />
+  <!-- Short broken pixels trailing left for that "sparks" feel -->
+  <line x1="4"   y1="116" x2="14"  y2="116" />
+  <line x1="22"  y1="144" x2="36"  y2="144" />
+  <line x1="70"  y1="84"  x2="80"  y2="84"  />
+  <line x1="78"  y1="172" x2="92"  y2="172" />
+</svg>

@@ -1,0 +1,10 @@
+# Celery worker — reuses the API image
+FROM outreach-os-api:latest AS runtime
+
+WORKDIR /app
+
+USER root
+COPY --chown=app:app apps/api /app
+USER app
+
+CMD ["celery", "-A", "outreach_os.workers.celery_app", "worker", "-l", "info"]
