@@ -4,10 +4,11 @@ Reads from environment / .env. All settings are validated at import time.
 """
 from __future__ import annotations
 
+import base64
 from functools import lru_cache
 from typing import Literal
 
-from pydantic import Field, SecretStr
+from pydantic import Field, SecretStr, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -35,6 +36,14 @@ class Settings(BaseSettings):
     )
     database_pool_size: int = 10
     database_max_overflow: int = 5
+
+    # --- CORS ---
+    # Browser origins allowed to call the API. Accepts a comma-separated list
+    # (e.g. "https://app.example.com,https://admin.example.com") or a JSON
+    # array. In development/test, localhost origins are added automatically.
+    # REQUIRED in production/staging — without it the deployed web app cannot
+    # make authenticated cross-origin requests to the API.
+    cors_allowed_origins: list[str] = Field(default_factory=list)
 
     # --- Redis / Celery ---
     redis_url: str = "redis://localhost:6379/0"
@@ -216,6 +225,70 @@ class Settings(BaseSettings):
     stripe_webhook_secret: SecretStr = SecretStr("")
     # Cron interval (seconds) for the monthly usage rollup.
     billing_rollup_interval_seconds: int = 3600
+
+    @field_validator("cors_allowed_origins", mode="before")
+    @classmethod
+    def _split_cors_origins(cls, value: object) -> object:
+        """Allow CORS origins as a comma-separated string in addition to a
+        JSON array (the latter is handled natively by pydantic-settings)."""
+        if isinstance(value, str):
+            stripped = value.strip()
+            if not stripped or stripped.startswith("["):
+                # Empty -> [], JSON array -> let pydantic parse it.
+                return stripped or []
+            return [origin.strip() for origin in stripped.split(",") if origin.strip()]
+        return value
+
+    @model_validator(mode="after")
+    def _enforce_production_safety(self) -> "Settings":
+        """Fail fast at startup if a production/staging deployment is running
+        with insecure development defaults. Catching this at boot is far safer
+        than discovering it after the service is live."""
+        if self.environment not in ("production", "staging"):
+            return self
+
+        problems: list[str] = []
+
+        jwt = self.jwt_secret.get_secret_value()
+        if not jwt or jwt in ("change-me", "change-me-to-a-long-random-string") or len(jwt) < 16:
+            problems.append("JWT_SECRET must be set to a strong (>= 16 char) random value")
+
+        vault = self.vault_master_key.get_secret_value()
+        if not vault:
+            problems.append("VAULT_MASTER_KEY must be set (base64 Fernet key)")
+        else:
+            try:
+                if len(base64.urlsafe_b64decode(vault)) < 32:
+                    problems.append("VAULT_MASTER_KEY must decode to at least 32 bytes")
+            except Exception:  # noqa: BLE001
+                problems.append("VAULT_MASTER_KEY must be valid base64")
+
+        if not self.inbound_webhook_secret:
+            problems.append("INBOUND_WEBHOOK_SECRET must be set (HMAC secret for inbound replies)")
+
+        if not self.cors_allowed_origins:
+            problems.append("CORS_ALLOWED_ORIGINS must list the web app origin(s)")
+
+        if self.celery_task_always_eager:
+            problems.append("CELERY_TASK_ALWAYS_EAGER must be false in production")
+
+        if self.public_base_url.startswith("http://localhost"):
+            problems.append("PUBLIC_BASE_URL must be the public URL (tracking/unsubscribe links)")
+
+        if self.billing_provider == "stripe":
+            if not self.stripe_secret_key.get_secret_value():
+                problems.append("STRIPE_SECRET_KEY must be set when BILLING_PROVIDER=stripe")
+            if not self.stripe_webhook_secret.get_secret_value():
+                problems.append("STRIPE_WEBHOOK_SECRET must be set when BILLING_PROVIDER=stripe")
+
+        if problems:
+            bullet = "\n  - "
+            raise ValueError(
+                f"Insecure or incomplete configuration for ENVIRONMENT={self.environment}:"
+                + bullet
+                + bullet.join(problems)
+            )
+        return self
 
 
 # Helper alias for the schema layer (so the OpenAPI doc is clean).

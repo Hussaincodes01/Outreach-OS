@@ -4,7 +4,17 @@ from __future__ import annotations
 
 import asyncio
 import os
+import sys
 import uuid
+
+# Safety guard: this script creates a well-known admin/admin login. Refuse to
+# run it against a production/staging environment unless explicitly forced.
+if os.environ.get("ENVIRONMENT", "development").lower() in {"production", "staging"} and "--force" not in sys.argv:
+    raise SystemExit(
+        "Refusing to seed the default admin/admin account in "
+        f"ENVIRONMENT={os.environ['ENVIRONMENT']}. "
+        "Create a real admin via the signup flow, or pass --force to override."
+    )
 
 os.environ.setdefault("DATABASE_URL", "postgresql+asyncpg://outreach:outreach@localhost:5432/outreach")
 

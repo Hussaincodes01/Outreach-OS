@@ -106,16 +106,19 @@ async def limit_body_size(request: Request, call_next):
     return await call_next(request)
 
 
-# CORS — locked down by env in production. Dev: allow the local web app.
+# CORS — production/staging origins come from CORS_ALLOWED_ORIGINS (validated
+# at startup to be non-empty). Development/test also allow the local web app.
 _settings = get_settings()
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=[
+_cors_origins = list(_settings.cors_allowed_origins)
+if _settings.environment in {"development", "test"}:
+    _cors_origins = [
         "http://localhost:3000",
         "http://127.0.0.1:3000",
+        *_cors_origins,
     ]
-    if _settings.environment in {"development", "test"}
-    else [],
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=_cors_origins,
     allow_credentials=True,
     allow_methods=["GET", "POST", "PATCH", "DELETE", "OPTIONS"],
     allow_headers=["Authorization", "Content-Type"],
