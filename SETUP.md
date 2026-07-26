@@ -54,9 +54,27 @@ Then edit `.env` locally. Keep real values on your machine only.
 | `JWT_REFRESH_TTL_DAYS` | Refresh token lifetime |
 | `VAULT_MASTER_KEY` | Local key used to wrap tenant credential encryption |
 | `LOG_LEVEL` | API log verbosity |
-| `NEXT_PUBLIC_API_URL` | Browser-visible API base URL for the web app |
+| `NEXT_PUBLIC_API_URL` | Browser-visible API base URL. Inlined into the client bundle at build time |
 | `NEXTAUTH_URL` | NextAuth app URL |
 | `NEXTAUTH_SECRET` | Secret used by NextAuth |
+| `CORS_ALLOWED_ORIGINS` | Comma-separated browser origins allowed to call the API. **Required in production** |
+| `PUBLIC_BASE_URL` | Public API URL embedded in tracking and unsubscribe links. **Required in production**, and may not be localhost |
+| `INBOUND_WEBHOOK_SECRET` | HMAC secret verifying inbound reply webhooks. **Required in production** |
+| `CELERY_TASK_ALWAYS_EAGER` | Runs background jobs inline. Must be `false` in production |
+
+## Provider API Keys Are Not Environment Variables
+
+Outreach OS is bring-your-own-key. LLM and scraping keys are added **in the
+app** (Settings → Integrations), encrypted with a per-tenant key, and never
+returned by the API.
+
+Do not set `OPENAI_API_KEY` or similar in the environment expecting it to be
+used — it will be ignored. A shared worker process serves many tenants
+concurrently, so an environment key could be applied to the wrong tenant's
+request; the resolver reads only from the encrypted per-tenant vault.
+
+The one exception is `OUTREACH_TEST_OPENAI_KEY`, used solely by the live-provider
+test to prove the BYOK path works end to end.
 
 ## Generate Safe Local Secrets
 
@@ -96,26 +114,44 @@ source .venv/bin/activate
 pip install -e ".[dev]"
 ```
 
+> **Windows:** `litellm` publishes no Windows wheel, and building its sdist
+> requires a Rust toolchain, so this install usually fails. Run the API in
+> Docker instead — see the Docker section of [README.md](README.md). The web
+> app installs and runs natively on Windows without trouble.
+
 ## Install Web Dependencies
 
+The repo uses npm workspaces, so install once from the root:
+
 ```bash
-cd apps/web
 npm install
 ```
 
 ## Run Tests
 
-API:
+API — requires the dev infrastructure (`npm run dev:infra`) to be running,
+since the suite exercises real PostgreSQL RLS:
 
 ```bash
 npm run test:api
 ```
 
-Web:
+Migrations run as the admin role during test setup, which mirrors production:
+migration `0010` needs superuser privileges. Set `DATABASE_URL_ADMIN`
+accordingly.
+
+Lint and typecheck:
 
 ```bash
-cd apps/web
-npm test
+cd apps/api && ruff check . && mypy src
+```
+
+Web — lint, typecheck and build. There is no web unit-test suite yet:
+
+```bash
+npm run lint:web
+npm run typecheck:web
+npm run build:web
 ```
 
 ## Before Pushing

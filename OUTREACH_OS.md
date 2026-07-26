@@ -10,11 +10,19 @@
 - **Deduplication**: automatic merge/block logic prevents duplicate leads
 - **Per-source rate limits** enforced via Redis
 
+### BYOK AI Layer
+- **13 providers**: OpenAI, Anthropic, Gemini, Groq, Mistral, DeepSeek, xAI, Cohere, Together AI, Fireworks AI, OpenRouter, Perplexity, Ollama (self-hosted)
+- **Per-tenant keys only**: resolved from the encrypted vault and passed explicitly to LiteLLM. Never read from the process environment, which would leak between tenants in a shared worker
+- **No silent fallback**: a missing key returns `428` with an actionable message instead of producing fabricated output
+- **Live key verification**: the Test action makes a real 1-token call, so a bad key surfaces at setup rather than mid-campaign
+- **Independent chat and embedding models**: draft on a provider with no embeddings API and still use the knowledge base
+
 ### AI Draft Pipeline
-- **RAG pipeline**: scraped content → chunk → embed → vector search → context for LLM
-- **Campaign-based drafting**: multi-step sequences with customizable templates
-- **Live LLM integration** (OpenAI) with per-tenant token caps, chunked output, and error recovery
-- **Knowledge Base**: per-tenant documents, chunked and indexed for semantic retrieval
+- **Tool-calling research agent**: the model chooses among lead profile, company site, knowledge base, previous touches, and web search, bounded by a step cap and a cumulative token budget
+- **Graceful degradation**: models without function calling fall back to deterministic research; a draft is always produced
+- **Full audit trail**: every tool call, argument, token count, and stop reason is recorded on `agent_run.trace`
+- **RAG pipeline**: uploaded content → chunk → embed → vector search → context for the draft
+- **Campaign-based drafting**: multi-step sequences that copy the sender's voice from their own sample emails
 
 ### Send & Reply Engine
 - **Mailbox management**: per-tenant send accounts with encrypted credential storage (Fernet + vault)
@@ -49,23 +57,40 @@
 
 ## Architecture
 
-- **Backend**: Python 3.10 + FastAPI + SQLAlchemy 2.0 async + asyncpg + Redis
-- **Frontend**: Next.js 14 (App Router) + Supabase Client
+- **Backend**: Python 3.11 + FastAPI + SQLAlchemy 2.0 async + asyncpg + Redis
+- **Frontend**: Next.js 14 (App Router) + TanStack Query. No Supabase — auth is the custom JWT layer described above
 - **Database**: PostgreSQL 16 + pgvector (pgvector/pgvector:0.7.4-pg16)
-- **Infrastructure**: Docker Desktop (Postgres, Redis 7, MinIO S3, MailHog)
+- **Infrastructure**: Docker Compose (Postgres, Redis 7, MinIO S3, MailHog)
 - **Background tasks**: Celery + Redis broker (eager mode in tests)
 - **Object storage**: MinIO (S3-compatible) per-tenant draft/attachment storage
 - **Auth**: bcrypt password hashing + JWT (HS256) with key rotation
+- **AI**: LiteLLM, with credentials resolved per tenant at call time
 
 ## Testing
 
-- 102 tests passing, 1 skipped (live LLM requires OPENAI_API_KEY)
+- 210 tests passing, 1 skipped (the live-provider test needs `OUTREACH_TEST_OPENAI_KEY`)
+- `ruff` and `mypy --strict` clean across the API
 - RLS isolation tests verify cross-tenant data separation
+- BYOK tests verify one tenant's key is invisible to another, and that the
+  process environment is never used as a fallback
+- Agent tests verify the step cap, the token budget, and graceful degradation
+- Config tests construct `Settings` from real environment variables — the only
+  way to catch env-parsing bugs that unit tests miss
 - Audit append-only tests verify immutability
-- All billing, scraping, drafting, send, reply, and meeting flows tested end-to-end
 
 ## Project Status
 
-- **Phases 0-7 complete**: multi-tenancy, scraping, drafting, send/reply, meetings, billing
-- **Phase 8 (Hardening) in progress**: rate limiting, security headers, GDPR, JWT rotation, load testing (k6), WAF rules, SOC2 artifacts
-- **Supabase migration path documented**: optional migration from custom auth/JWT/RLS to Supabase Auth + Realtime + Edge Functions
+**Verified working:** the production images build; `docker-compose.prod.yml`
+brings up Postgres, Redis, migrations, API, worker and beat; `/health` returns
+ok; and an end-to-end HTTP smoke test covers signup under RLS, the onboarding
+checklist, the provider catalogue, `428` on a missing key, encrypted credential
+storage, and audit writes.
+
+**Not yet verified:** no call has been made to a real LLM provider. The BYOK
+path, the agent's tool-calling loop, and the catalogue's model IDs are all
+exercised against fakes. Run `tests/test_phase3_live_llm.py` with
+`OUTREACH_TEST_OPENAI_KEY` set before trusting this with real campaigns.
+
+**Known gaps:** leads can only be created by the scraping pipeline — there is
+no import endpoint yet. Billing defaults to the stub provider, and the calendar
+and CRM clients are stubs.

@@ -34,6 +34,8 @@ It is designed for teams building or operating:
 
 | Module | What it does |
 | --- | --- |
+| BYOK AI | Connect your own key for any of 13 providers. Usage is billed to your account, never a shared key |
+| Agentic research | A tool-calling agent decides what to look up per lead, within a hard step and token budget |
 | Lead scraping | Multi-source lead discovery using search, company sites, and enrichment providers |
 | ICP management | Tenant-specific ideal customer profiles and targeting rules |
 | Deduplication | Lead merge/block logic to reduce duplicates across sources |
@@ -46,13 +48,34 @@ It is designed for teams building or operating:
 | Notifications | In-app notifications, Slack webhooks, and preference controls |
 | Compliance | GDPR export/erasure, suppression lists, audit logs, and RLS isolation |
 
+## Bring Your Own Key
+
+Every AI call runs on the workspace's own provider key. There is no shared
+server key and no silent fallback:
+
+- Keys are entered in the app, encrypted with a per-tenant Fernet key, and
+  never returned by the API — not even to the person who added them.
+- Credentials are **never** read from the process environment. A Celery worker
+  serves many tenants at once, so an environment key would leak across
+  tenants.
+- With no key connected, drafting fails with an actionable `428` pointing at
+  the setup page, rather than quietly producing fabricated output.
+- Chat and embedding models are chosen separately, so you can draft on a
+  provider that has no embeddings API (Anthropic, Ollama) and still use the
+  knowledge base.
+
+Connectable providers: OpenAI, Anthropic, Google Gemini, Groq, Mistral,
+DeepSeek, xAI, Cohere, Together AI, Fireworks AI, OpenRouter, Perplexity, and
+Ollama for models running on your own hardware.
+
 ## Why This Project Stands Out
 
+- **Bring-your-own-key by design** — per-tenant encrypted credentials, no shared provider key anywhere.
 - **Tenant isolation at the database layer** with PostgreSQL Row-Level Security.
 - **Hash-chained append-only audit logs** for tamper-evident operational history.
-- **AI pipeline architecture** for research, retrieval, personalized drafting, and follow-up.
+- **Agentic research with hard cost limits** — the model picks its tools, bounded by step count and token budget.
 - **Provider-ready integrations** for LLMs, email, CRM, billing, object storage, and notifications.
-- **Production-minded SaaS foundation** with tests, migrations, Docker infra, and security docs.
+- **Self-serve onboarding** derived from live workspace state, so the checklist can't go stale.
 - **Local development first** with Docker Compose for PostgreSQL, Redis, MinIO, and MailHog.
 
 ## SEO Keywords
@@ -81,8 +104,9 @@ scripts         Developer automation and seed scripts
 | Object storage | MinIO / S3-compatible storage |
 | Email testing | MailHog in local development |
 | Auth | JWT with rotation-ready key design |
-| AI | LiteLLM-compatible service layer |
-| Testing | Pytest, Vitest, tenancy isolation tests |
+| AI | LiteLLM across 13 providers, keys supplied per tenant (BYOK) |
+| Agent | LangGraph pipeline with a tool-calling research loop |
+| Testing | Pytest, tenancy isolation tests, BYOK and agent-budget tests |
 | Infrastructure | Docker Compose, production Dockerfiles, GitHub Actions |
 
 ---
@@ -110,7 +134,6 @@ For details, read [SETUP.md](SETUP.md).
 
 ```bash
 npm install
-cd apps/web && npm install && cd ../..
 ```
 
 For the API, use your preferred Python environment:
@@ -122,6 +145,10 @@ python -m venv .venv
 pip install -e ".[dev]"
 cd ../..
 ```
+
+> **Windows:** `litellm` ships no Windows wheel and its sdist needs a Rust
+> toolchain, so the API usually cannot be installed natively. Run the API in
+> Docker instead (see below); the web app runs fine on Windows.
 
 ### 4. Start infrastructure
 
@@ -140,6 +167,25 @@ npm run dev:api
 ```bash
 npm run dev:web
 ```
+
+### 7. Connect an AI provider
+
+Sign up at `http://localhost:3000`, then follow the setup checklist on the
+dashboard. Add your own provider key under **Integrations** and press **Test** —
+it makes a real call, so an invalid key fails immediately rather than midway
+through a campaign.
+
+### Or run the whole stack in Docker
+
+Closest to production, and the simplest path on Windows:
+
+```bash
+cp .env.production.example .env.production   # then fill in real secrets
+docker compose -f infra/docker/docker-compose.prod.yml up -d --build
+```
+
+See [docs/runbook.md](docs/runbook.md) for what each required variable does and
+how to verify the stack came up correctly.
 
 ---
 
@@ -176,13 +222,13 @@ rg -n --hidden -g '!node_modules' -g '!.git' -g '!.env' -g '!.env.*' -g '!*.log'
 
 ## Roadmap
 
-- Harden production deploys and WAF rules
+- Lead import (CSV/JSON) — leads currently arrive only via scraping
+- Verify the agent's tool-calling loop against every supported provider
 - Improve CRM connectors for HubSpot and Salesforce
 - Add richer campaign analytics and deliverability dashboards
-- Expand AI agents for research, scoring, and reply classification
 - Add organization-level role management
-- Add hosted billing portal polish
-- Create a clean OSS release profile
+- Replace the stub calendar/CRM clients with real integrations
+- Harden production deploys and WAF rules
 
 ---
 
