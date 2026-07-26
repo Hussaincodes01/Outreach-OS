@@ -7,6 +7,6 @@ from outreach_os.workers.tasks import (
     notifications,
     scrape,
     send_tasks,
-)  # noqa: F401
+)
 
 __all__ = ["draft", "notifications", "scrape", "send_tasks"]

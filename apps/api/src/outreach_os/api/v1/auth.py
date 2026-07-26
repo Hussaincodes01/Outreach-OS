@@ -7,6 +7,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from outreach_os.api.deps import get_current_user, get_db, get_scoped_db
 from outreach_os.core.audit import write_audit_event
 from outreach_os.core.auth import (
     TokenError,
@@ -15,8 +16,9 @@ from outreach_os.core.auth import (
     decode_token,
     verify_password,
 )
+from outreach_os.core.config import Settings
 from outreach_os.core.rate_limit import RateLimitDecision, check_and_consume_ip
-from outreach_os.api.deps import get_current_user, get_db, get_scoped_db
+from outreach_os.core.tenancy import set_tenant_for_session
 from outreach_os.domain.models.user import AppUser, UserRole
 from outreach_os.domain.schemas.auth import (
     AccessTokenResponse,
@@ -28,12 +30,11 @@ from outreach_os.domain.schemas.auth import (
 )
 from outreach_os.domain.schemas.user import UserOut
 from outreach_os.services import tenant_service, user_service
-from outreach_os.core.tenancy import set_tenant_for_session
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 
 
-def _settings():
+def _settings() -> Settings:
     from outreach_os.core.config import get_settings
 
     return get_settings()

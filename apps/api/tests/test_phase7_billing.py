@@ -25,8 +25,6 @@ from outreach_os.core.auth import create_access_token, hash_password
 from outreach_os.core.billing_client import StubBillingClient, set_billing_client
 from outreach_os.core.db import session_scope
 from outreach_os.core.tenancy import set_tenant_for_session
-from outreach_os.domain.models.plan import Plan
-from outreach_os.domain.models.subscription import Subscription
 from outreach_os.domain.models.tenant import Tenant
 from outreach_os.domain.models.usage_event import UsageEvent
 from outreach_os.domain.models.user import AppUser, UserRole
@@ -80,7 +78,7 @@ async def test_plans_seeded(stub_billing):
 
 @pytest.mark.asyncio
 async def test_no_subscription_returns_none(stub_billing):
-    tid, uid, token = await _make_tenant()
+    _tid, _uid, token = await _make_tenant()
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://test") as ac:
         r = await ac.get("/v1/billing/subscription", headers={"Authorization": f"Bearer {token}"})
@@ -90,7 +88,7 @@ async def test_no_subscription_returns_none(stub_billing):
 
 @pytest.mark.asyncio
 async def test_usage_summary(stub_billing):
-    tid, uid, token = await _make_tenant()
+    _tid, _uid, token = await _make_tenant()
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://test") as ac:
         r = await ac.get("/v1/billing/usage", headers={"Authorization": f"Bearer {token}"})
@@ -104,7 +102,7 @@ async def test_usage_summary(stub_billing):
 
 @pytest.mark.asyncio
 async def test_checkout_returns_stub_url(stub_billing):
-    tid, uid, token = await _make_tenant()
+    _tid, _uid, token = await _make_tenant()
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://test") as ac:
         r = await ac.post(
@@ -121,7 +119,7 @@ async def test_checkout_returns_stub_url(stub_billing):
 
 @pytest.mark.asyncio
 async def test_stub_webhook_creates_subscription(stub_billing):
-    tid, uid, token = await _make_tenant()
+    tid, _uid, token = await _make_tenant()
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://test") as ac:
         r = await ac.post(
@@ -152,7 +150,7 @@ async def test_stub_webhook_creates_subscription(stub_billing):
 
 @pytest.mark.asyncio
 async def test_checkout_then_webhook_then_portal(stub_billing):
-    tid, uid, token = await _make_tenant()
+    tid, _uid, token = await _make_tenant()
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://test") as ac:
         # 1. start checkout
@@ -200,7 +198,7 @@ async def test_checkout_then_webhook_then_portal(stub_billing):
 
 @pytest.mark.asyncio
 async def test_record_usage_bumps_rollup(stub_billing):
-    tid, uid, _tok = await _make_tenant()
+    tid, _uid, _tok = await _make_tenant()
     async with session_scope() as session:
         await set_tenant_for_session(session, str(tid))
         for _ in range(5):
@@ -219,7 +217,7 @@ async def test_record_usage_bumps_rollup(stub_billing):
 
 @pytest.mark.asyncio
 async def test_check_within_limits_blocks_when_over(stub_billing):
-    tid, uid, _tok = await _make_tenant()
+    tid, _uid, _tok = await _make_tenant()
     # Starter plan: monthly_send_cap = 500. Set the tenant to 499 first.
     async with session_scope() as session:
         await set_tenant_for_session(session, str(tid))
@@ -232,7 +230,7 @@ async def test_check_within_limits_blocks_when_over(stub_billing):
     # Two more raises.
     async with session_scope() as session:
         await set_tenant_for_session(session, str(tid))
-        with pytest.raises(billing_service.BillingLimitExceeded) as exc:
+        with pytest.raises(billing_service.BillingLimitExceededError) as exc:
             await billing_service.check_within_limits(
                 session, tenant_id=tid, metric="send", n=2
             )
@@ -244,20 +242,20 @@ async def test_check_within_limits_blocks_when_over(stub_billing):
 async def test_plan_gating_crm_sync_on_starter(stub_billing):
     """CRM sync is only enabled on growth+ plans. The service layer
     must raise an error when called on a starter tenant."""
-    from outreach_os.core.crm_client import StubCrmClient, set_crm_client
     from outreach_os.core.calendar_client import StubCalendarClient, set_calendar_client
+    from outreach_os.core.crm_client import StubCrmClient, set_crm_client
 
     crm = StubCrmClient()
     set_crm_client(crm)
     cal = StubCalendarClient()
     set_calendar_client(cal)
     try:
-        tid, uid, _tok = await _make_tenant()
+        tid, _uid, _tok = await _make_tenant()
         # Create a connection + meeting.
         async with session_scope() as session:
             await set_tenant_for_session(session, str(tid))
-            from outreach_os.domain.models.lead import Lead
             from outreach_os.domain.models.crm_connection import CrmConnection
+            from outreach_os.domain.models.lead import Lead
             lead = Lead(
                 tenant_id=tid, source="serper", email="x@example.test",
                 first_name="X", last_name="Y",
@@ -276,10 +274,7 @@ async def test_plan_gating_crm_sync_on_starter(stub_billing):
             )
             session.add(conn)
             await session.flush()
-            conn_id = conn.id
         # CRM sync without an active subscription should be gated.
-        from outreach_os.services import crm_service
-        from outreach_os.services.meeting_service import MeetingService
         # Create a meeting, then try to sync.
         async with session_scope() as session:
             await set_tenant_for_session(session, str(tid))
@@ -299,13 +294,16 @@ async def test_plan_gating_crm_sync_on_starter(stub_billing):
             await session.flush()
             meeting_id = meeting.id
         # On starter, sync should refuse (no CRM feature flag).
-        with pytest.raises(Exception) as exc:
-            from outreach_os.services import billing_service, crm_service
+        async def _sync_on_starter() -> None:
             from outreach_os.services.crm_service import CrmService
+
             async with session_scope() as session:
                 await set_tenant_for_session(session, str(tid))
                 svc = CrmService(session)
                 await svc.sync_meeting(tenant_id=tid, meeting_id=meeting_id)
+
+        with pytest.raises(billing_service.BillingError):
+            await _sync_on_starter()
     finally:
         set_crm_client(None)
         set_calendar_client(None)
@@ -314,7 +312,7 @@ async def test_plan_gating_crm_sync_on_starter(stub_billing):
 @pytest.mark.asyncio
 async def test_plan_gating_relaxes_on_growth(stub_billing):
     """After upgrading to growth, crm_sync_enabled is True."""
-    tid, uid, _tok = await _make_tenant()
+    tid, _uid, _tok = await _make_tenant()
     async with session_scope() as session:
         await set_tenant_for_session(session, str(tid))
         await billing_service.apply_subscription_event(
@@ -336,7 +334,7 @@ async def test_plan_gating_relaxes_on_growth(stub_billing):
 
 @pytest.mark.asyncio
 async def test_rollup_resets_after_window(stub_billing):
-    tid, uid, _tok = await _make_tenant()
+    tid, _uid, _tok = await _make_tenant()
     async with session_scope() as session:
         await set_tenant_for_session(session, str(tid))
         # Set tenant's reset_at to last month and add some events in this month.
@@ -363,8 +361,8 @@ async def test_rollup_resets_after_window(stub_billing):
 
 @pytest.mark.asyncio
 async def test_subscription_isolated_by_tenant(stub_billing):
-    tid_a, uid_a, _tok_a = await _make_tenant()
-    tid_b, uid_b, _tok_b = await _make_tenant()
+    tid_a, _uid_a, _tok_a = await _make_tenant()
+    tid_b, _uid_b, _tok_b = await _make_tenant()
     # Apply a subscription to A only.
     async with session_scope() as session:
         await set_tenant_for_session(session, str(tid_a))

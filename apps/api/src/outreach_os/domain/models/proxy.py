@@ -13,7 +13,7 @@ from datetime import datetime
 from sqlalchemy import CheckConstraint, ForeignKey, Index, Integer, LargeBinary, Text
 from sqlalchemy.dialects.postgresql import UUID as PG_UUID
 from sqlalchemy.orm import Mapped, mapped_column
-from sqlalchemy.sql.sqltypes import Boolean, TIMESTAMP
+from sqlalchemy.sql.sqltypes import TIMESTAMP, Boolean
 
 from outreach_os.core.db import Base
 

@@ -20,7 +20,7 @@ from typing import Any
 
 from outreach_os.core.db import session_scope
 from outreach_os.core.tenancy import set_tenant_for_session
-from outreach_os.services.draft_service import DraftService
+from outreach_os.services.draft_service import DraftGenerationResult, DraftService
 from outreach_os.workers.celery_app import celery_app
 
 log = logging.getLogger(__name__)
@@ -33,23 +33,22 @@ async def generate_draft_async(
     lead_id: uuid.UUID,
     step_id: uuid.UUID,
     force_regenerate: bool = False,
-):
+) -> DraftGenerationResult:
     """Pure-async core: no Celery dependency. Returns the
     DraftGenerationResult from the DraftService."""
     async with session_scope() as session:
         await set_tenant_for_session(session, str(tenant_id))
         service = DraftService(session)
-        result = await service.generate_draft(
+        return await service.generate_draft(
             tenant_id=tenant_id,
             campaign_id=campaign_id,
             lead_id=lead_id,
             step_id=step_id,
             force_regenerate=force_regenerate,
         )
-    return result
 
 
-@celery_app.task(name="outreach_os.workers.generate_draft")
+@celery_app.task(name="outreach_os.workers.generate_draft")  # type: ignore[untyped-decorator]
 def generate_draft(
     tenant_id: str,
     campaign_id: str,
@@ -57,42 +56,40 @@ def generate_draft(
     step_id: str,
     force_regenerate: bool = False,
 ) -> dict[str, Any]:
-    """Celery wrapper. In eager mode this runs the async core on a fresh
-    event loop in a thread, then returns. In production this is a no-op
-    that dispatches to a real worker."""
-    from outreach_os.core.config import get_settings
+    """Celery task body — always runs the pipeline.
 
+    This function IS the work. Whether it executes in a worker process or
+    inline is Celery's decision (`task_always_eager`); either way the body
+    must run, so it must not branch on that setting. The enqueue-vs-run-
+    inline choice belongs to the caller, and already lives in
+    `DraftService.dispatch_generate_draft`.
+    """
     started = datetime.utcnow()
-    settings = get_settings()
     log.info(
         "generate_draft start tenant=%s campaign=%s lead=%s step=%s",
         tenant_id, campaign_id, lead_id, step_id,
     )
-    if settings.celery_task_always_eager:
-        # Tests run the async core inline.
-        summary = asyncio.run(
-            generate_draft_async(
-                tenant_id=uuid.UUID(tenant_id),
-                campaign_id=uuid.UUID(campaign_id),
-                lead_id=uuid.UUID(lead_id),
-                step_id=uuid.UUID(step_id),
-                force_regenerate=force_regenerate,
-            )
+    summary = asyncio.run(
+        generate_draft_async(
+            tenant_id=uuid.UUID(tenant_id),
+            campaign_id=uuid.UUID(campaign_id),
+            lead_id=uuid.UUID(lead_id),
+            step_id=uuid.UUID(step_id),
+            force_regenerate=force_regenerate,
         )
-    else:
-        # Production: a separate worker process consumes the queue and
-        # runs `generate_draft_async` there. The calling thread MUST NOT
-        # block on the async core, so we return immediately.
-        log.info(
-            "generate_draft dispatched tenant=%s campaign=%s lead=%s step=%s",
-            tenant_id, campaign_id, lead_id, step_id,
-        )
-        return {"status": "dispatched"}
+    )
     log.info(
         "generate_draft done tenant=%s draft=%s status=%s elapsed=%.2fs",
         tenant_id,
-        summary.get("draft_id"),
-        summary.get("status"),
+        summary.draft_id,
+        summary.status,
         (datetime.utcnow() - started).total_seconds(),
     )
-    return summary
+    return {
+        "draft_id": str(summary.draft_id),
+        "agent_run_id": str(summary.agent_run_id),
+        "status": summary.status,
+        "subject": summary.subject,
+        "model_used": summary.model_used,
+        "error": summary.error,
+    }

@@ -17,7 +17,6 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from outreach_os.core.config import NotificationEventKey
 
-
 # ---------- Notification ----------
 
 

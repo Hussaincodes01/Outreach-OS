@@ -291,7 +291,7 @@ class DraftService:
                 model_used=None,
                 error=run.error,
             )
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:
             log.exception("agent run failed")
             run.status = "failed"
             run.error = str(exc)[:500]

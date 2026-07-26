@@ -5,6 +5,7 @@ import hashlib
 import hmac
 import logging
 import uuid
+from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -14,6 +15,7 @@ from outreach_os.core.config import get_settings
 from outreach_os.core.db import session_scope
 from outreach_os.core.rate_limit import RateLimitDecision, check_and_consume_ip
 from outreach_os.core.tenancy import set_tenant_for_session
+from outreach_os.domain.models.reply import Reply
 from outreach_os.domain.schemas.phase4 import (
     REPLY_CLASSIFICATIONS,
     ReplyIngestIn,
@@ -41,7 +43,7 @@ def _raise_429(decision: RateLimitDecision) -> None:
     )
 
 
-def _to_out(r) -> ReplyOut:
+def _to_out(r: Reply) -> ReplyOut:
     return ReplyOut(
         id=r.id,
         created_at=r.created_at,
@@ -101,7 +103,7 @@ webhook_router = APIRouter(prefix="/webhooks", tags=["webhooks"])
 async def inbound_email(
     payload: ReplyIngestIn,
     request: Request,
-) -> dict:
+) -> dict[str, Any]:
     """Receive an inbound email reply (Gmail Pub/Sub, SES SNS, SendGrid).
 
     The body is HMAC-SHA256 signed with `INBOUND_WEBHOOK_SECRET` and
@@ -168,10 +170,11 @@ async def _find_send_across_tenants(
         candidates.extend(references.split())
     if not candidates:
         return None
+    from sqlalchemy import select
+
     from outreach_os.core.db import session_scope as _ss
     from outreach_os.domain.models.send import Send
     from outreach_os.domain.models.tenant import Tenant
-    from sqlalchemy import select
 
     async with _ss() as session:
         tenants = (await session.execute(

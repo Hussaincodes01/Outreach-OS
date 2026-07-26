@@ -150,7 +150,6 @@ npm run dev:web
 - [docs/architecture.md](docs/architecture.md): system architecture and invariants
 - [docs/threat-model.md](docs/threat-model.md): security posture and threat model
 - [docs/runbook.md](docs/runbook.md): operations and incident notes
-- [01-MASTER-PLAN.md](01-MASTER-PLAN.md): long-form roadmap and implementation plan
 
 ---
 

@@ -42,7 +42,7 @@ class CampaignStep(Base):
         TIMESTAMP(timezone=True), nullable=False, server_default="now()"
     )
 
-    campaign: Mapped["Campaign"] = relationship(  # type: ignore[name-defined]  # noqa: F821
+    campaign: Mapped[Campaign] = relationship(  # type: ignore[name-defined]  # noqa: F821
         "Campaign",
         back_populates="steps",
     )

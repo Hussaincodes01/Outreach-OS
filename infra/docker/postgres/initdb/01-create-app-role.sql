@@ -32,15 +32,13 @@ SELECT 'CREATE DATABASE outreach_test OWNER postgres'
 WHERE NOT EXISTS (SELECT 1 FROM pg_database WHERE datname = 'outreach_test')
 \gexec
 
--- The app role can connect, use the public schema, and run DML on
--- everything that exists or will exist. Migrations (DDL like CREATE
--- EXTENSION) need CREATE on the database; we grant that so the role
--- can run the test-suite migrations as well. (Extensions themselves
--- are installed by 00-extensions.sql as the superuser.)
+-- Database-level grants. These live in the shared catalog, so they can be
+-- issued from any database.
 GRANT CONNECT, CREATE ON DATABASE outreach TO outreach;
 GRANT CONNECT, CREATE ON DATABASE outreach_test TO outreach;
-GRANT USAGE, CREATE ON SCHEMA public TO outreach;
-GRANT ALL PRIVILEGES ON ALL TABLES IN SCHEMA public TO outreach;
-GRANT ALL PRIVILEGES ON ALL SEQUENCES IN SCHEMA public TO outreach;
-ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON TABLES TO outreach;
-ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON SEQUENCES TO outreach;
+
+-- NOTE: schema-, table- and sequence-level grants are NOT cluster-wide — they
+-- are stored per database. Issuing them here would only affect the bootstrap
+-- `postgres` database, which the application never connects to, leaving the
+-- app role unable to read its own tables. They are applied inside each app
+-- database by 03-grants-appdb.sql instead.

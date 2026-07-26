@@ -2,13 +2,15 @@
 from __future__ import annotations
 
 import json
+import logging
+import re
 import uuid
-from datetime import datetime, timezone
-from typing import AsyncIterator
+from collections.abc import AsyncIterator
+from datetime import datetime
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi.responses import StreamingResponse
-from sqlalchemy import select, text
+from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from outreach_os.api.deps import AuthContext, get_current_user, get_scoped_db
@@ -17,36 +19,52 @@ from outreach_os.core.db import session_scope
 from outreach_os.core.tenancy import set_tenant_for_session
 from outreach_os.domain.models.tenant import Tenant
 
+log = logging.getLogger(__name__)
+
 router = APIRouter(prefix="/gdpr", tags=["gdpr"])
+
+# Postgres unquoted-identifier shape. Guards the one place a table name has to
+# be interpolated into SQL (see _stream_tenant_data).
+_SAFE_IDENT = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
 
 
 async def _stream_tenant_data(tenant_id: uuid.UUID) -> AsyncIterator[bytes]:
     """Stream all tenant data as NDJSON for DSAR export."""
     async with session_scope() as session:
         await set_tenant_for_session(session, str(tenant_id))
-        
+
         # Get all tables for this tenant
         tables = await session.execute(text("""
             SELECT table_name FROM information_schema.tables
-            WHERE table_schema = 'public' 
+            WHERE table_schema = 'public'
             AND table_name NOT IN ('alembic_version', 'plan')
             AND table_type = 'BASE TABLE'
         """))
         table_names = [row[0] for row in tables.fetchall()]
-        
+
         for table in table_names:
             # Check if table has tenant_id column
-            cols = await session.execute(text(f"""
-                SELECT column_name FROM information_schema.columns
-                WHERE table_name = '{table}' AND column_name = 'tenant_id'
-            """))
+            cols = await session.execute(
+                text("""
+                    SELECT column_name FROM information_schema.columns
+                    WHERE table_name = :tbl AND column_name = 'tenant_id'
+                """),
+                {"tbl": table},
+            )
             if not cols.scalar_one_or_none():
                 continue
-            
-            rows = await session.execute(text(f"""
-                SELECT * FROM {table} WHERE tenant_id = :tid
-            """), {"tid": tenant_id})
-            
+
+            # A table name cannot be a bind parameter, so it is interpolated.
+            # `table` comes from information_schema (never from the request)
+            # and is re-validated here before being quoted as an identifier.
+            if not _SAFE_IDENT.fullmatch(table):
+                log.warning("gdpr export: skipping non-identifier table %r", table)
+                continue
+            rows = await session.execute(
+                text(f'SELECT * FROM "{table}" WHERE tenant_id = :tid'),  # noqa: S608
+                {"tid": tenant_id},
+            )
+
             for row in rows.fetchall():
                 data = dict(row._mapping)
                 # Convert UUIDs and datetimes to strings
@@ -60,16 +78,16 @@ async def _stream_tenant_data(tenant_id: uuid.UUID) -> AsyncIterator[bytes]:
 async def export_my_data(
     user: AuthContext = Depends(get_current_user),
     db: AsyncSession = Depends(get_scoped_db),
-):
+) -> StreamingResponse:
     """DSAR: Export all personal data for the authenticated user's tenant.
-    
+
     Returns NDJSON stream: each line is {"table": "...", "data": {...}}
     """
     await write_audit_event(
         db, action="gdpr.export_requested", target_type="tenant",
         target_id=user.tenant_id, actor_kind="user", actor_id=user.user_id
     )
-    
+
     return StreamingResponse(
         _stream_tenant_data(user.tenant_id),
         media_type="application/x-ndjson",
@@ -81,11 +99,11 @@ async def export_my_data(
 async def delete_my_account(
     user: AuthContext = Depends(get_current_user),
     db: AsyncSession = Depends(get_scoped_db),
-):
+) -> dict[str, object]:
     """Right to erasure: Soft-delete tenant and anonymize PII.
-    
+
     - Marks tenant as 'deleted' (status)
-    - Anonymizes email/name in user table
+    - Anonymizes the email in the user table (the only PII column there)
     - Audit log remains immutable (hash-chained)
     - Actual purge after 30-day grace period (admin job)
     """
@@ -93,34 +111,34 @@ async def delete_my_account(
     tenant = await db.get(Tenant, user.tenant_id)
     if not tenant:
         raise HTTPException(status_code=404, detail="tenant not found")
-    
-    # Anonymize user PII
+
+    # Anonymize user PII. NOTE: AppUser stores no name columns — email is the
+    # only personal identifier on the row. (Assigning `first_name`/`last_name`
+    # here would just set throwaway Python attributes that never reach the DB.)
     from outreach_os.domain.models.user import AppUser
     user_row = await db.get(AppUser, user.user_id)
     if user_row:
         user_row.email = f"deleted-{user.user_id}@gdpr.local"
-        user_row.first_name = "Deleted"
-        user_row.last_name = "User"
         user_row.is_active = False
-    
+
     # Mark tenant deleted
     tenant.status = "deleted"
     tenant.name = f"Deleted Tenant {tenant.id}"
-    
+
     await db.flush()
-    
+
     await write_audit_event(
         db, action="gdpr.erasure_requested", target_type="tenant",
         target_id=user.tenant_id, actor_kind="user", actor_id=user.user_id,
         payload={"grace_period_days": 30}
     )
-    
+
     return {"status": "deletion_scheduled", "grace_period_days": 30}
 
 
 @router.get("/export/status")
 async def export_status(
     user: AuthContext = Depends(get_current_user),
-):
+) -> dict[str, str]:
     """Check status of a previously requested export (future: async job)."""
     return {"status": "ready", "note": "Export is streaming, no async job yet"}

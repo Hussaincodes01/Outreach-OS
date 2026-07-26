@@ -8,13 +8,21 @@ from __future__ import annotations
 
 import uuid
 from datetime import datetime
+from typing import TYPE_CHECKING
 
 from sqlalchemy import CheckConstraint, ForeignKey, Index, Text
-from sqlalchemy.dialects.postgresql import CITEXT, UUID as PG_UUID
+from sqlalchemy.dialects.postgresql import CITEXT
+from sqlalchemy.dialects.postgresql import UUID as PG_UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from sqlalchemy.sql.sqltypes import TIMESTAMP
 
 from outreach_os.core.db import Base
+
+if TYPE_CHECKING:
+    from outreach_os.domain.models.reply import Reply
+    from outreach_os.domain.models.sequence_step import SequenceStep
+    from outreach_os.domain.models.tracking_event import TrackingEvent
+
 
 
 class Send(Base):
@@ -67,16 +75,16 @@ class Send(Base):
         TIMESTAMP(timezone=True), nullable=True
     )
 
-    step: Mapped["SequenceStep"] = relationship(  # noqa: F821
+    step: Mapped[SequenceStep] = relationship(
         "SequenceStep", back_populates="sends"
     )
-    replies: Mapped[list["Reply"]] = relationship(  # noqa: F821
+    replies: Mapped[list[Reply]] = relationship(
         "Reply",
         back_populates="send",
         cascade="all, delete-orphan",
         passive_deletes=True,
     )
-    tracking_events: Mapped[list["TrackingEvent"]] = relationship(  # noqa: F821
+    tracking_events: Mapped[list[TrackingEvent]] = relationship(
         "TrackingEvent",
         back_populates="send",
         cascade="all, delete-orphan",

@@ -14,7 +14,7 @@ from tests.fake_llm import FakeLLMClient
 
 
 @pytest.fixture(autouse=True)
-def _fake_llm():
+def fake_llm():
     """Install the deterministic fake for the duration of each test so
     the knowledge endpoint's RAGService doesn't hit the real OpenAI API."""
     fake = FakeLLMClient()

@@ -15,11 +15,12 @@ current tenant.
 from __future__ import annotations
 
 import uuid
+from collections.abc import Iterable
 from dataclasses import dataclass
-from typing import Iterable
+from typing import Any, cast
 
 import tiktoken
-from sqlalchemy import delete, select, text
+from sqlalchemy import CursorResult, delete, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from outreach_os.core.config import get_settings
@@ -29,7 +30,6 @@ from outreach_os.domain.models.knowledge_base_chunk import (
     KnowledgeBaseChunk,
 )
 from outreach_os.domain.models.knowledge_base_item import KnowledgeBaseItem
-
 
 # --- Tokenizer --------------------------------------------------------------
 
@@ -132,10 +132,13 @@ class RAGService:
 
     async def delete_item(self, *, tenant_id: uuid.UUID, item_id: uuid.UUID) -> bool:
         """Delete an item (cascades to chunks). Returns True if a row was removed."""
-        result = await self.session.execute(
-            delete(KnowledgeBaseItem)
-            .where(KnowledgeBaseItem.tenant_id == tenant_id)
-            .where(KnowledgeBaseItem.id == item_id)
+        result = cast(
+            "CursorResult[Any]",
+            await self.session.execute(
+                delete(KnowledgeBaseItem)
+                .where(KnowledgeBaseItem.tenant_id == tenant_id)
+                .where(KnowledgeBaseItem.id == item_id)
+            ),
         )
         return (result.rowcount or 0) > 0
 

@@ -7,6 +7,7 @@ and reuses it for the life of the process.
 """
 from __future__ import annotations
 
+import contextlib
 from threading import Lock
 
 import redis
@@ -37,8 +38,7 @@ def reset_for_tests() -> None:
     global _client
     with _lock:
         if _client is not None:
-            try:
+            # Best-effort close: the pool is being discarded either way.
+            with contextlib.suppress(Exception):
                 _client.close()
-            except Exception:  # noqa: BLE001
-                pass
             _client = None

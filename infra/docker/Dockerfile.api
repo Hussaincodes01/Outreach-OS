@@ -41,6 +41,25 @@ WORKDIR /app
 RUN apt-get update && apt-get install -y --no-install-recommends \
     libpq5 \
     curl \
+    # Chromium deps for Scrapling StealthyFetcher (anti-bot fallback)
+    libnss3 \
+    libnspr4 \
+    libatk1.0-0 \
+    libatk-bridge2.0-0 \
+    libcups2 \
+    libdrm2 \
+    libxkbcommon0 \
+    libxcomposite1 \
+    libxdamage1 \
+    libxrandr2 \
+    libgbm1 \
+    libpango-1.0-0 \
+    libcairo2 \
+    libasound2 \
+    libatspi2.0-0 \
+    libxshmfence1 \
+    fonts-liberation \
+    wget \
     && rm -rf /var/lib/apt/lists/* \
     && useradd --create-home --uid 1000 app
 
@@ -50,7 +69,18 @@ COPY --from=builder /install /usr/local
 # Source is still needed at runtime for Alembic migrations (alembic/, alembic.ini).
 COPY apps/api /app
 
+# Download Chromium for Scrapling's StealthyFetcher (anti-bot fallback).
+# The primary Fetcher doesn't need a browser — this is only for sites
+# that block HTTP requests with Cloudflare/captcha.
+#
+# This MUST run as the runtime user: the browser cache is resolved from
+# $HOME, so downloading it as root would put it in /root/.cache where the
+# unprivileged `app` user cannot read it, and StealthyFetcher would fail at
+# runtime with "browser executable not found". Docker does not derive HOME
+# from USER, so set it explicitly.
 USER app
+ENV HOME=/home/app
+RUN scrapling install
 
 EXPOSE 8000
 

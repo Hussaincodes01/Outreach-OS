@@ -14,7 +14,8 @@ from datetime import datetime
 from typing import Any
 
 from sqlalchemy import CheckConstraint, ForeignKey, Index, Text
-from sqlalchemy.dialects.postgresql import JSONB, UUID as PG_UUID
+from sqlalchemy.dialects.postgresql import JSONB
+from sqlalchemy.dialects.postgresql import UUID as PG_UUID
 from sqlalchemy.orm import Mapped, mapped_column
 from sqlalchemy.sql.sqltypes import TIMESTAMP
 

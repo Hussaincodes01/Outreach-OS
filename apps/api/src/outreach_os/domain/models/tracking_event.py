@@ -8,13 +8,19 @@ from __future__ import annotations
 
 import uuid
 from datetime import datetime
+from typing import TYPE_CHECKING
 
 from sqlalchemy import CheckConstraint, ForeignKey, Index, Text
-from sqlalchemy.dialects.postgresql import INET, UUID as PG_UUID
+from sqlalchemy.dialects.postgresql import INET
+from sqlalchemy.dialects.postgresql import UUID as PG_UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from sqlalchemy.sql.sqltypes import TIMESTAMP
 
 from outreach_os.core.db import Base
+
+if TYPE_CHECKING:
+    from outreach_os.domain.models.send import Send
+
 
 
 class TrackingEvent(Base):
@@ -41,7 +47,7 @@ class TrackingEvent(Base):
         TIMESTAMP(timezone=True), nullable=False, server_default="now()"
     )
 
-    send: Mapped["Send"] = relationship(  # noqa: F821
+    send: Mapped[Send] = relationship(
         "Send", back_populates="tracking_events"
     )
 

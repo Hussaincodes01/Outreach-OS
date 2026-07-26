@@ -15,7 +15,7 @@ import base64
 import hashlib
 import json
 import os
-from typing import Any
+from typing import Any, cast
 
 from cryptography.fernet import Fernet, InvalidToken
 
@@ -65,6 +65,6 @@ def decrypt(tenant_id: str, ciphertext: bytes) -> dict[str, Any]:
     except InvalidToken as exc:
         raise VaultError("invalid ciphertext (wrong tenant or tampered data)") from exc
     try:
-        return json.loads(plaintext)
+        return cast("dict[str, Any]", json.loads(plaintext))
     except (TypeError, ValueError) as exc:
         raise VaultError("decrypted payload is not valid JSON") from exc

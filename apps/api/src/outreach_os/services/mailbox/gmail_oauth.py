@@ -10,7 +10,7 @@ from __future__ import annotations
 import secrets
 import uuid
 from datetime import datetime, timedelta, timezone
-from typing import Any
+from typing import Any, cast
 from urllib.parse import urlencode
 
 import httpx
@@ -18,7 +18,6 @@ from jose import jwt
 
 from outreach_os.core.config import get_settings
 from outreach_os.core.errors import OAuthError
-
 
 GOOGLE_AUTH_URL = "https://accounts.google.com/o/oauth2/v2/auth"
 GOOGLE_TOKEN_URL = "https://oauth2.googleapis.com/token"
@@ -33,16 +32,22 @@ def build_state_token(*, user_id: uuid.UUID, tenant_id: uuid.UUID) -> str:
         "nonce": secrets.token_urlsafe(16),
         "exp": int((datetime.now(timezone.utc) + timedelta(minutes=10)).timestamp()),
     }
-    return jwt.encode(
-        payload, settings.jwt_secret.get_secret_value(), algorithm=settings.jwt_alg
+    return cast(
+        "str",
+        jwt.encode(
+            payload, settings.jwt_secret.get_secret_value(), algorithm=settings.jwt_alg
+        ),
     )
 
 
 def verify_state_token(token: str) -> dict[str, Any]:
     settings = get_settings()
     try:
-        return jwt.decode(
-            token, settings.jwt_secret.get_secret_value(), algorithms=[settings.jwt_alg]
+        return cast(
+            "dict[str, Any]",
+            jwt.decode(
+                token, settings.jwt_secret.get_secret_value(), algorithms=[settings.jwt_alg]
+            ),
         )
     except Exception as exc:
         raise OAuthError(f"invalid OAuth state: {exc}") from exc
@@ -84,7 +89,7 @@ async def exchange_code_for_tokens(code: str) -> dict[str, Any]:
         raise OAuthError(
             f"Google token exchange failed: {resp.status_code} {resp.text[:200]}"
         )
-    return resp.json()
+    return cast("dict[str, Any]", resp.json())
 
 
 def extract_email_and_refresh(tokens: dict[str, Any]) -> tuple[str, str | None]:

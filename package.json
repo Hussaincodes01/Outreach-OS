@@ -16,6 +16,8 @@
     "typecheck:api": "npm run typecheck --workspace=@outreach-os/api",
     "build:api": "npm run build --workspace=@outreach-os/api",
     "build:web": "npm run build --workspace=@outreach-os/web",
+    "lint:web": "npm run lint --workspace=@outreach-os/web",
+    "typecheck:web": "npm run typecheck --workspace=@outreach-os/web",
     "codegen:web": "bash scripts/generate-api-client.sh"
   },
   "engines": {

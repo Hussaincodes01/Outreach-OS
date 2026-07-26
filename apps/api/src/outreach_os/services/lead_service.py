@@ -8,7 +8,8 @@ at the same time).
 from __future__ import annotations
 
 import uuid
-from typing import Iterable
+from collections.abc import Iterable
+from typing import Any
 
 from sqlalchemy import select
 from sqlalchemy.dialects.postgresql import insert as pg_insert
@@ -51,7 +52,7 @@ async def insert_leads(
 
     existing_emails = await _existing_emails(session, tenant_id)
     new_emails: set[str] = set()
-    rows: list[dict] = []
+    rows: list[dict[str, Any]] = []
 
     for rl in raw_list:
         email_key = (rl.email or "").lower() or None

@@ -7,13 +7,14 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from outreach_os.api.deps import AuthContext, get_current_user, get_scoped_db
+from outreach_os.domain.models.send import Send
 from outreach_os.domain.schemas.phase4 import SEND_STATUSES, SendOut, SendPage
 from outreach_os.services.send_service import SendService
 
 router = APIRouter(prefix="/sends", tags=["sends"])
 
 
-def _to_out(s) -> SendOut:
+def _to_out(s: Send) -> SendOut:
     return SendOut(
         id=s.id,
         created_at=s.created_at,

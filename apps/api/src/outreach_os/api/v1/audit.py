@@ -4,6 +4,7 @@ from __future__ import annotations
 import csv
 import io
 import json
+from collections.abc import AsyncIterator
 from datetime import datetime
 from typing import Annotated, Any
 
@@ -143,8 +144,6 @@ async def export_csv(
             buf.truncate(0)
             offset += 500
 
-    from collections.abc import AsyncIterator
-
     return StreamingResponse(
         gen(),
         media_type="text/csv",
@@ -163,9 +162,7 @@ async def export_json(
     per line; consumers should `split('\n')` and `json.loads` each.
     """
 
-    async def gen() -> "AsyncIterator[bytes]":
-        from collections.abc import AsyncIterator
-
+    async def gen() -> AsyncIterator[bytes]:
         offset = 0
         while True:
             rows = (

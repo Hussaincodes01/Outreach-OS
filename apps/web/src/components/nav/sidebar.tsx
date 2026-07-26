@@ -71,6 +71,9 @@ export function Sidebar() {
         href="/dashboard"
         className="flex h-16 items-center gap-3 border-b px-4 font-semibold text-foreground hover:text-primary"
       >
+        {/* Static SVG logo: next/image would need `dangerouslyAllowSVG`, which we
+            deliberately keep off. There is nothing to optimize here. */}
+        {/* eslint-disable-next-line @next/next/no-img-element */}
         <img src="/logo.svg" alt="" className="h-9 w-9 shrink-0" aria-hidden="true" />
         <span className="text-lg tracking-tight">Outreach OS</span>
       </Link>

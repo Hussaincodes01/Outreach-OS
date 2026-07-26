@@ -10,7 +10,7 @@ from pydantic import Field
 from outreach_os.domain.schemas.common import ApiModel, IdTimestampMixin
 
 # --- Source enum (mirrors DB check constraint + LeadSourceKind) ---
-VALID_SOURCES = ("serper", "company_site", "linkedin_proxycurl")
+VALID_SOURCES = ("serper", "company_site", "linkedin_proxycurl", "social_profiles")
 
 
 # --- Proxy ---

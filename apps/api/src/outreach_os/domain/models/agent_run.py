@@ -8,9 +8,11 @@ from __future__ import annotations
 
 import uuid
 from datetime import datetime
+from typing import Any
 
 from sqlalchemy import CheckConstraint, ForeignKey, Index, Integer, Text
-from sqlalchemy.dialects.postgresql import JSONB, UUID as PG_UUID
+from sqlalchemy.dialects.postgresql import JSONB
+from sqlalchemy.dialects.postgresql import UUID as PG_UUID
 from sqlalchemy.orm import Mapped, mapped_column
 from sqlalchemy.sql.sqltypes import TIMESTAMP
 
@@ -39,7 +41,7 @@ class AgentRun(Base):
         nullable=True,
     )
     status: Mapped[str] = mapped_column(Text, nullable=False, server_default="pending")
-    trace: Mapped[dict] = mapped_column(JSONB, nullable=False, server_default="{}")
+    trace: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False, server_default="{}")
     input_tokens: Mapped[int] = mapped_column(Integer, nullable=False, server_default="0")
     output_tokens: Mapped[int] = mapped_column(Integer, nullable=False, server_default="0")
     embeddings_tokens: Mapped[int] = mapped_column(Integer, nullable=False, server_default="0")

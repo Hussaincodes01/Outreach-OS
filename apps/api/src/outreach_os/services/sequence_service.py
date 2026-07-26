@@ -8,8 +8,8 @@ follow-ups after a reply. `stop_run` halts the run with a reason.
 from __future__ import annotations
 
 import uuid
+from collections.abc import Sequence
 from datetime import datetime, timedelta
-from typing import Sequence
 
 from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
@@ -74,14 +74,16 @@ class SequenceService:
             await self.session.execute(
                 select(Suppression.email).where(
                     Suppression.tenant_id == tenant_id,
-                    Suppression.email.in_([l.email for l in leads if l.email]),
+                    Suppression.email.in_([lead.email for lead in leads if lead.email]),
                 )
             )
         ).scalars().all()
         suppressed = {e.lower() for e in suppressions if e}
         if suppressed:
             # Skip suppressed leads silently.
-            leads = [l for l in leads if (l.email or "").lower() not in suppressed]
+            leads = [
+                lead for lead in leads if (lead.email or "").lower() not in suppressed
+            ]
 
         # Create the run.
         run = SequenceRun(

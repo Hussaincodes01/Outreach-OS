@@ -6,14 +6,13 @@ removed or skipped.
 from __future__ import annotations
 
 import pytest
-from httpx import AsyncClient, ASGITransport
+from httpx import AsyncClient
 from sqlalchemy import text
 
 from outreach_os.core.db import session_scope
 from outreach_os.core.tenancy import set_tenant_for_session
 
-from .conftest import bearer, signup, unique_email, make_email
-
+from .conftest import bearer, signup, unique_email
 
 pytestmark = pytest.mark.asyncio
 
@@ -33,7 +32,8 @@ async def test_signup_creates_separate_tenants(client: AsyncClient) -> None:
         tenant_name="Globex",
         tenant_slug="globex",
     )
-    assert a["access_token"] and b["access_token"]
+    assert a["access_token"]
+    assert b["access_token"]
     assert a["access_token"] != b["access_token"]
 
 

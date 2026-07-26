@@ -15,8 +15,9 @@ from __future__ import annotations
 
 import logging
 import uuid
+from collections.abc import Sequence
 from datetime import datetime, timezone
-from typing import Any, Sequence
+from typing import Any
 
 from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
@@ -310,7 +311,7 @@ class CrmService:
             conn.last_sync_at = datetime.now(timezone.utc)
             conn.last_sync_error = str(exc)
             conn.status = "error"
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:
             log.exception("crm sync unexpected error conn=%s", conn.id)
             event.error = f"unexpected: {exc}"
             conn.last_sync_at = datetime.now(timezone.utc)
@@ -338,7 +339,7 @@ class CrmService:
                         "error": event.error,
                     },
                 )
-            except Exception:  # noqa: BLE001
+            except Exception:
                 log.warning("notification dispatch failed for crm.sync.failed", exc_info=True)
 
         return event
@@ -367,7 +368,7 @@ class CrmService:
             payload = vault_service.decrypt_for_tenant(
                 str(tenant_id), cred.ciphertext
             )
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:
             raise CrmError(f"failed to decrypt CRM credential: {exc}") from exc
         token = (
             payload.get("access_token")

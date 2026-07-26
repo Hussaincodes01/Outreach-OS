@@ -16,7 +16,7 @@ own key.
 from __future__ import annotations
 
 import logging
-from typing import Any
+from typing import Any, cast
 
 import httpx
 from tenacity import (
@@ -57,7 +57,7 @@ def _post_serper(api_key: str, query: str, gl: str, hl: str, num: int) -> dict[s
     if resp.status_code >= 500:
         raise SerperError(f"serper 5xx (status {resp.status_code})")
     resp.raise_for_status()
-    return resp.json()
+    return cast("dict[str, Any]", resp.json())
 
 
 def _domain_from_url(url: str) -> str | None:
@@ -68,7 +68,7 @@ def _domain_from_url(url: str) -> str | None:
         if host.startswith("www."):
             host = host[4:]
         return host or None
-    except Exception:  # noqa: BLE001
+    except Exception:
         return None
 
 

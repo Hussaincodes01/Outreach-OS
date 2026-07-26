@@ -17,7 +17,6 @@ import uuid
 from datetime import datetime, timezone
 
 import pytest
-import pytest_asyncio
 
 from outreach_os.core.calendar_client import (
     CalendarEvent,
@@ -35,7 +34,7 @@ from tests.conftest import bearer, signup
 
 
 @pytest.fixture(autouse=True)
-def _fake_calendar_and_crm():
+def fake_calendar_and_crm():
     cal = StubCalendarClient()
     set_calendar_client(cal)
     crm = StubCrmClient()
@@ -50,27 +49,27 @@ async def _subscribe_growth(tenant_id) -> None:
     tests predate billing — call this helper right after `signup` to
     subscribe the new tenant to growth so CRM sync assertions pass."""
     import uuid as _uuid
-    from datetime import datetime as _dt, timezone as _tz
+    from datetime import datetime as _dt
+    from datetime import timezone as _tz
 
     from outreach_os.core.db import get_session_factory
     from outreach_os.core.tenancy import set_tenant_for_session
     from outreach_os.services.billing_service import apply_subscription_event
 
     factory = get_session_factory()
-    async with factory() as session:
-        async with session.begin():
-            await set_tenant_for_session(session, str(tenant_id))
-            await apply_subscription_event(
-                session,
-                tenant_id=_uuid.UUID(str(tenant_id)),
-                plan_code="growth",
-                provider="stub",
-                provider_customer_id="test_cust",
-                provider_subscription_id="test_sub",
-                status="active",
-                current_period_start=_dt.now(_tz.utc),
-                current_period_end=_dt.now(_tz.utc),
-            )
+    async with factory() as session, session.begin():
+        await set_tenant_for_session(session, str(tenant_id))
+        await apply_subscription_event(
+            session,
+            tenant_id=_uuid.UUID(str(tenant_id)),
+            plan_code="growth",
+            provider="stub",
+            provider_customer_id="test_cust",
+            provider_subscription_id="test_sub",
+            status="active",
+            current_period_start=_dt.now(_tz.utc),
+            current_period_end=_dt.now(_tz.utc),
+        )
 
 
 # --- helpers ---
@@ -78,28 +77,26 @@ async def _subscribe_growth(tenant_id) -> None:
 
 async def _ensure_tenant(tenant_id, slug: str, name: str) -> None:
     factory = get_session_factory()
-    async with factory() as session:
-        async with session.begin():
-            existing = await session.get(Tenant, tenant_id)
-            if existing is None:
-                session.add(
-                    Tenant(id=tenant_id, slug=slug, name=name,
-                           plan="starter", status="active")
-                )
+    async with factory() as session, session.begin():
+        existing = await session.get(Tenant, tenant_id)
+        if existing is None:
+            session.add(
+                Tenant(id=tenant_id, slug=slug, name=name,
+                       plan="starter", status="active")
+            )
 
 
 async def _create_lead(tenant_id, email: str, first_name: str = "T") -> uuid.UUID:
     factory = get_session_factory()
-    async with factory() as session:
-        async with session.begin():
-            await set_tenant_for_session(session, tenant_id)
-            lead = Lead(
-                tenant_id=tenant_id, source="serper",
-                email=email, first_name=first_name,
-            )
-            session.add(lead)
-            await session.flush()
-            return lead.id
+    async with factory() as session, session.begin():
+        await set_tenant_for_session(session, tenant_id)
+        lead = Lead(
+            tenant_id=tenant_id, source="serper",
+            email=email, first_name=first_name,
+        )
+        session.add(lead)
+        await session.flush()
+        return lead.id
 
 
 # --- ICSBuilder ---
@@ -155,7 +152,7 @@ def test_ics_builder_escapes_commas_and_newlines():
 
 
 async def test_meeting_create_proposal_generates_three_slots(
-    client, _fake_calendar_and_crm
+    client
 ):
     a = await signup(
         client,
@@ -164,21 +161,20 @@ async def test_meeting_create_proposal_generates_three_slots(
         tenant_name="A-prop",
     )
     lead_id = await _create_lead(a["tenant_id"], "lead-prop@x.example")
-    async with get_session_factory()() as session:
-        async with session.begin():
-            await set_tenant_for_session(session, a["tenant_id"])
-            svc = MeetingService(session)
-            meeting = await svc.create_proposal(
-                tenant_id=a["tenant_id"], lead_id=lead_id
-            )
-            assert meeting.status == "proposed"
-            assert len(meeting.proposed_slots) == 3
-            assert meeting.ics_uid.endswith("@outreach-os.local")
-            assert meeting.organizer_email == "lead-prop@x.example"
+    async with get_session_factory()() as session, session.begin():
+        await set_tenant_for_session(session, a["tenant_id"])
+        svc = MeetingService(session)
+        meeting = await svc.create_proposal(
+            tenant_id=a["tenant_id"], lead_id=lead_id
+        )
+        assert meeting.status == "proposed"
+        assert len(meeting.proposed_slots) == 3
+        assert meeting.ics_uid.endswith("@outreach-os.local")
+        assert meeting.organizer_email == "lead-prop@x.example"
 
 
 async def test_meeting_confirm_creates_calendar_event(
-    client, _fake_calendar_and_crm
+    client, fake_calendar_and_crm
 ):
     a = await signup(
         client,
@@ -187,27 +183,26 @@ async def test_meeting_confirm_creates_calendar_event(
         tenant_name="A-conf",
     )
     lead_id = await _create_lead(a["tenant_id"], "lead-conf@x.example")
-    async with get_session_factory()() as session:
-        async with session.begin():
-            await set_tenant_for_session(session, a["tenant_id"])
-            svc = MeetingService(session)
-            meeting = await svc.create_proposal(
-                tenant_id=a["tenant_id"], lead_id=lead_id
-            )
-            confirmed = await svc.confirm(
-                tenant_id=a["tenant_id"],
-                meeting_id=meeting.id,
-                slot_index=1,
-            )
-            assert confirmed.status == "confirmed"
-            assert confirmed.chosen_slot is not None
-            assert confirmed.confirmed_at is not None
-            assert confirmed.provider_event_id is not None
-            assert confirmed.provider_event_id.startswith("cal-stub-")
-            assert confirmed.ics_sequence == 1
+    async with get_session_factory()() as session, session.begin():
+        await set_tenant_for_session(session, a["tenant_id"])
+        svc = MeetingService(session)
+        meeting = await svc.create_proposal(
+            tenant_id=a["tenant_id"], lead_id=lead_id
+        )
+        confirmed = await svc.confirm(
+            tenant_id=a["tenant_id"],
+            meeting_id=meeting.id,
+            slot_index=1,
+        )
+        assert confirmed.status == "confirmed"
+        assert confirmed.chosen_slot is not None
+        assert confirmed.confirmed_at is not None
+        assert confirmed.provider_event_id is not None
+        assert confirmed.provider_event_id.startswith("cal-stub-")
+        assert confirmed.ics_sequence == 1
 
     # Stub calendar has the event
-    cal = _fake_calendar_and_crm["calendar"]
+    cal = fake_calendar_and_crm["calendar"]
     assert len(cal.events) == 1
     ev = next(iter(cal.events.values()))
     assert ev.status == "CONFIRMED"
@@ -215,7 +210,7 @@ async def test_meeting_confirm_creates_calendar_event(
 
 
 async def test_meeting_confirm_rejects_bad_slot(
-    client, _fake_calendar_and_crm
+    client
 ):
     a = await signup(
         client,
@@ -224,23 +219,22 @@ async def test_meeting_confirm_rejects_bad_slot(
         tenant_name="A-bad",
     )
     lead_id = await _create_lead(a["tenant_id"], "lead-bad@x.example")
-    async with get_session_factory()() as session:
-        async with session.begin():
-            await set_tenant_for_session(session, a["tenant_id"])
-            svc = MeetingService(session)
-            meeting = await svc.create_proposal(
-                tenant_id=a["tenant_id"], lead_id=lead_id
+    async with get_session_factory()() as session, session.begin():
+        await set_tenant_for_session(session, a["tenant_id"])
+        svc = MeetingService(session)
+        meeting = await svc.create_proposal(
+            tenant_id=a["tenant_id"], lead_id=lead_id
+        )
+        with pytest.raises(MeetingError, match="slot_index"):
+            await svc.confirm(
+                tenant_id=a["tenant_id"],
+                meeting_id=meeting.id,
+                slot_index=99,
             )
-            with pytest.raises(MeetingError, match="slot_index"):
-                await svc.confirm(
-                    tenant_id=a["tenant_id"],
-                    meeting_id=meeting.id,
-                    slot_index=99,
-                )
 
 
 async def test_meeting_decline_marks_status(
-    client, _fake_calendar_and_crm
+    client
 ):
     a = await signup(
         client,
@@ -249,21 +243,20 @@ async def test_meeting_decline_marks_status(
         tenant_name="A-dec",
     )
     lead_id = await _create_lead(a["tenant_id"], "lead-dec@x.example")
-    async with get_session_factory()() as session:
-        async with session.begin():
-            await set_tenant_for_session(session, a["tenant_id"])
-            svc = MeetingService(session)
-            meeting = await svc.create_proposal(
-                tenant_id=a["tenant_id"], lead_id=lead_id
-            )
-            declined = await svc.decline(
-                tenant_id=a["tenant_id"], meeting_id=meeting.id
-            )
-            assert declined.status == "declined"
-            assert declined.declined_at is not None
+    async with get_session_factory()() as session, session.begin():
+        await set_tenant_for_session(session, a["tenant_id"])
+        svc = MeetingService(session)
+        meeting = await svc.create_proposal(
+            tenant_id=a["tenant_id"], lead_id=lead_id
+        )
+        declined = await svc.decline(
+            tenant_id=a["tenant_id"], meeting_id=meeting.id
+        )
+        assert declined.status == "declined"
+        assert declined.declined_at is not None
 
 
-async def test_meeting_list_isolated_per_tenant(client, _fake_calendar_and_crm):
+async def test_meeting_list_isolated_per_tenant(client):
     a = await signup(
         client,
         email="a-iso@acme-customer.example",
@@ -278,20 +271,18 @@ async def test_meeting_list_isolated_per_tenant(client, _fake_calendar_and_crm):
     )
     a_lead = await _create_lead(a["tenant_id"], "la@x.example")
     b_lead = await _create_lead(b["tenant_id"], "lb@x.example")
-    async with get_session_factory()() as session:
-        async with session.begin():
-            await set_tenant_for_session(session, a["tenant_id"])
-            svc = MeetingService(session)
-            await svc.create_proposal(
-                tenant_id=a["tenant_id"], lead_id=a_lead
-            )
-    async with get_session_factory()() as session:
-        async with session.begin():
-            await set_tenant_for_session(session, b["tenant_id"])
-            svc = MeetingService(session)
-            await svc.create_proposal(
-                tenant_id=b["tenant_id"], lead_id=b_lead
-            )
+    async with get_session_factory()() as session, session.begin():
+        await set_tenant_for_session(session, a["tenant_id"])
+        svc = MeetingService(session)
+        await svc.create_proposal(
+            tenant_id=a["tenant_id"], lead_id=a_lead
+        )
+    async with get_session_factory()() as session, session.begin():
+        await set_tenant_for_session(session, b["tenant_id"])
+        svc = MeetingService(session)
+        await svc.create_proposal(
+            tenant_id=b["tenant_id"], lead_id=b_lead
+        )
     # A only sees their meeting.
     r = await client.get("/v1/meetings", headers=bearer(a["access_token"]))
     assert r.status_code == 200
@@ -304,7 +295,7 @@ async def test_meeting_list_isolated_per_tenant(client, _fake_calendar_and_crm):
 # --- CrmService ---
 
 
-async def test_crm_connection_crud_isolated_per_tenant(client, _fake_calendar_and_crm):
+async def test_crm_connection_crud_isolated_per_tenant(client):
     a = await signup(
         client,
         email="a-crm@acme-customer.example",
@@ -369,7 +360,7 @@ async def test_crm_connection_crud_isolated_per_tenant(client, _fake_calendar_an
 
 
 async def test_crm_sync_meeting_writes_row_to_active_connections(
-    client, _fake_calendar_and_crm
+    client, fake_calendar_and_crm
 ):
     a = await signup(
         client,
@@ -397,19 +388,18 @@ async def test_crm_sync_meeting_writes_row_to_active_connections(
     conn_id = r.json()["id"]
     # Create + confirm a meeting for the lead.
     lead_id = await _create_lead(a["tenant_id"], "lead-sync@x.example", "Sync")
-    async with get_session_factory()() as session:
-        async with session.begin():
-            await set_tenant_for_session(session, a["tenant_id"])
-            svc = MeetingService(session)
-            meeting = await svc.create_proposal(
-                tenant_id=a["tenant_id"], lead_id=lead_id
-            )
-            confirmed = await svc.confirm(
-                tenant_id=a["tenant_id"],
-                meeting_id=meeting.id,
-                slot_index=0,
-            )
-            meeting_id = confirmed.id
+    async with get_session_factory()() as session, session.begin():
+        await set_tenant_for_session(session, a["tenant_id"])
+        svc = MeetingService(session)
+        meeting = await svc.create_proposal(
+            tenant_id=a["tenant_id"], lead_id=lead_id
+        )
+        confirmed = await svc.confirm(
+            tenant_id=a["tenant_id"],
+            meeting_id=meeting.id,
+            slot_index=0,
+        )
+        meeting_id = confirmed.id
 
     # Sync manually.
     r = await client.post(
@@ -422,7 +412,7 @@ async def test_crm_sync_meeting_writes_row_to_active_connections(
     assert data["total"] == 1
     assert data["items"][0]["status"] == "success"
     # The stub crm got one row with values in column order.
-    crm = _fake_calendar_and_crm["crm"]
+    crm = fake_calendar_and_crm["crm"]
     assert len(crm.rows) == 1
     row = crm.rows[0]
     assert row["spreadsheet_id"] == "sheet-pipe"
@@ -443,7 +433,7 @@ async def test_crm_sync_meeting_writes_row_to_active_connections(
 
 
 async def test_crm_sync_meeting_records_failure_on_paused(
-    client, _fake_calendar_and_crm
+    client
 ):
     a = await signup(
         client,
@@ -471,19 +461,18 @@ async def test_crm_sync_meeting_records_failure_on_paused(
     assert r.status_code == 200, r.text
     # Create + confirm a meeting.
     lead_id = await _create_lead(a["tenant_id"], "lp@x.example")
-    async with get_session_factory()() as session:
-        async with session.begin():
-            await set_tenant_for_session(session, a["tenant_id"])
-            svc = MeetingService(session)
-            meeting = await svc.create_proposal(
-                tenant_id=a["tenant_id"], lead_id=lead_id
-            )
-            await svc.confirm(
-                tenant_id=a["tenant_id"],
-                meeting_id=meeting.id,
-                slot_index=0,
-            )
-            meeting_id = meeting.id
+    async with get_session_factory()() as session, session.begin():
+        await set_tenant_for_session(session, a["tenant_id"])
+        svc = MeetingService(session)
+        meeting = await svc.create_proposal(
+            tenant_id=a["tenant_id"], lead_id=lead_id
+        )
+        await svc.confirm(
+            tenant_id=a["tenant_id"],
+            meeting_id=meeting.id,
+            slot_index=0,
+        )
+        meeting_id = meeting.id
     # Manual sync should be blocked (paused).
     r = await client.post(
         f"/v1/crm/connections/{conn_id}/sync",
@@ -498,7 +487,7 @@ async def test_crm_sync_meeting_records_failure_on_paused(
 
 
 async def test_first_positive_reply_creates_proposal(
-    client, _fake_calendar_and_crm
+    client
 ):
     """A positive reply on a Send with no open meeting should auto-create
     a proposal (3 slots, status=proposed) for the lead."""
@@ -515,69 +504,73 @@ async def test_first_positive_reply_creates_proposal(
             tenant_name="A-hook",
         )
         # Build a minimal campaign + mailbox + lead + send + reply chain.
+        from datetime import datetime
         from email.utils import make_msgid
+
         from outreach_os.domain.models.campaign import Campaign
         from outreach_os.domain.models.campaign_step import CampaignStep
         from outreach_os.domain.models.draft import Draft
         from outreach_os.domain.models.mailbox import Mailbox
+        from outreach_os.domain.models.send import Send
         from outreach_os.domain.models.sequence_run import SequenceRun
         from outreach_os.domain.models.sequence_step import SequenceStep
-        from outreach_os.domain.models.send import Send
-        from datetime import datetime
         lead_id = await _create_lead(a["tenant_id"], "lead-hook@x.example", "Hook")
         factory = get_session_factory()
-        async with factory() as session:
-            async with session.begin():
-                await set_tenant_for_session(session, a["tenant_id"])
-                camp = Campaign(
-                    tenant_id=a["tenant_id"], name="hook-camp",
-                    style_sample_emails=[],
-                )
-                session.add(camp); await session.flush()
-                cs = CampaignStep(
-                    tenant_id=a["tenant_id"], campaign_id=camp.id,
-                    step_number=1, delay_days=0, subject_template="Hi",
-                )
-                session.add(cs); await session.flush()
-                mb = Mailbox(
-                    tenant_id=a["tenant_id"], provider="gmail",
-                    email_address="h@x.example",
-                )
-                session.add(mb)
-                run = SequenceRun(
-                    tenant_id=a["tenant_id"], campaign_id=camp.id,
-                    name="hook-run",
-                )
-                session.add(run); await session.flush()
-                step = SequenceStep(
-                    tenant_id=a["tenant_id"], run_id=run.id, lead_id=lead_id,
-                    campaign_step_id=cs.id, status="sent",
-                    scheduled_at=datetime.utcnow(),
-                    sent_at=datetime.utcnow(),
-                )
-                session.add(step); await session.flush()
-                draft = Draft(
-                    tenant_id=a["tenant_id"], campaign_id=camp.id,
-                    lead_id=lead_id, step_id=cs.id,
-                    status="ready", subject="Hi",
-                    body_preview="body", model_used="stub",
-                )
-                session.add(draft); await session.flush()
-                mid = make_msgid(domain="x.example")
-                send = Send(
-                    tenant_id=a["tenant_id"], step_id=step.id,
-                    mailbox_id=mb.id, draft_id=draft.id,
-                    to_email="lead-hook@x.example", from_email="h@x.example",
-                    subject="Hi", body_text="body",
-                    message_id_header=mid,
-                    status="sent", sent_at=datetime.utcnow(),
-                )
-                session.add(send); await session.flush()
-                send_id = str(send.id)
-                step_id = step.id
-
-        import hmac
+        async with factory() as session, session.begin():
+            await set_tenant_for_session(session, a["tenant_id"])
+            camp = Campaign(
+                tenant_id=a["tenant_id"], name="hook-camp",
+                style_sample_emails=[],
+            )
+            session.add(camp)
+            await session.flush()
+            cs = CampaignStep(
+                tenant_id=a["tenant_id"], campaign_id=camp.id,
+                step_number=1, delay_days=0, subject_template="Hi",
+            )
+            session.add(cs)
+            await session.flush()
+            mb = Mailbox(
+                tenant_id=a["tenant_id"], provider="gmail",
+                email_address="h@x.example",
+            )
+            session.add(mb)
+            run = SequenceRun(
+                tenant_id=a["tenant_id"], campaign_id=camp.id,
+                name="hook-run",
+            )
+            session.add(run)
+            await session.flush()
+            step = SequenceStep(
+                tenant_id=a["tenant_id"], run_id=run.id, lead_id=lead_id,
+                campaign_step_id=cs.id, status="sent",
+                scheduled_at=datetime.utcnow(),
+                sent_at=datetime.utcnow(),
+            )
+            session.add(step)
+            await session.flush()
+            draft = Draft(
+                tenant_id=a["tenant_id"], campaign_id=camp.id,
+                lead_id=lead_id, step_id=cs.id,
+                status="ready", subject="Hi",
+                body_preview="body", model_used="stub",
+            )
+            session.add(draft)
+            await session.flush()
+            mid = make_msgid(domain="x.example")
+            send = Send(
+                tenant_id=a["tenant_id"], step_id=step.id,
+                mailbox_id=mb.id, draft_id=draft.id,
+                to_email="lead-hook@x.example", from_email="h@x.example",
+                subject="Hi", body_text="body",
+                message_id_header=mid,
+                status="sent", sent_at=datetime.utcnow(),
+            )
+            session.add(send)
+            await session.flush()
         import hashlib
+        import hmac
+
         from outreach_os.core.config import get_settings
         settings = get_settings()
         webhook_secret = settings.inbound_webhook_secret or "test-webhook-secret"
@@ -619,7 +612,7 @@ async def test_first_positive_reply_creates_proposal(
 
 
 async def test_counter_reply_positive_auto_confirms_open_proposal(
-    client, _fake_calendar_and_crm
+    client
 ):
     """A second positive reply for the same lead should auto-confirm the
     open proposal (slot 0) and trigger a CRM sync (if any connection
@@ -652,77 +645,83 @@ async def test_counter_reply_positive_auto_confirms_open_proposal(
 
         # Create a pre-existing open meeting for the lead.
         lead_id = await _create_lead(a["tenant_id"], "lc@x.example", "Cnt")
-        async with get_session_factory()() as session:
-            async with session.begin():
-                await set_tenant_for_session(session, a["tenant_id"])
-                svc = MeetingService(session)
-                pre_meeting = await svc.create_proposal(
-                    tenant_id=a["tenant_id"], lead_id=lead_id
-                )
-                pre_meeting_id = pre_meeting.id
+        async with get_session_factory()() as session, session.begin():
+            await set_tenant_for_session(session, a["tenant_id"])
+            svc = MeetingService(session)
+            pre_meeting = await svc.create_proposal(
+                tenant_id=a["tenant_id"], lead_id=lead_id
+            )
+            pre_meeting_id = pre_meeting.id
 
         # Now ingest a positive reply (counter-reply case).
+        from datetime import datetime
         from email.utils import make_msgid
+
         from outreach_os.domain.models.campaign import Campaign
         from outreach_os.domain.models.campaign_step import CampaignStep
         from outreach_os.domain.models.draft import Draft
         from outreach_os.domain.models.mailbox import Mailbox
+        from outreach_os.domain.models.send import Send
         from outreach_os.domain.models.sequence_run import SequenceRun
         from outreach_os.domain.models.sequence_step import SequenceStep
-        from outreach_os.domain.models.send import Send
-        from datetime import datetime
         factory = get_session_factory()
         mid = make_msgid(domain="x.example")
-        async with factory() as session:
-            async with session.begin():
-                await set_tenant_for_session(session, a["tenant_id"])
-                camp = Campaign(
-                    tenant_id=a["tenant_id"], name="cnt-camp",
-                    style_sample_emails=[],
-                )
-                session.add(camp); await session.flush()
-                cs = CampaignStep(
-                    tenant_id=a["tenant_id"], campaign_id=camp.id,
-                    step_number=1, delay_days=0, subject_template="Hi",
-                )
-                session.add(cs); await session.flush()
-                mb = Mailbox(
-                    tenant_id=a["tenant_id"], provider="gmail",
-                    email_address="c@x.example",
-                )
-                session.add(mb)
-                run = SequenceRun(
-                    tenant_id=a["tenant_id"], campaign_id=camp.id,
-                    name="cnt-run",
-                )
-                session.add(run); await session.flush()
-                step = SequenceStep(
-                    tenant_id=a["tenant_id"], run_id=run.id, lead_id=lead_id,
-                    campaign_step_id=cs.id, status="sent",
-                    scheduled_at=datetime.utcnow(),
-                    sent_at=datetime.utcnow(),
-                )
-                session.add(step); await session.flush()
-                draft = Draft(
-                    tenant_id=a["tenant_id"], campaign_id=camp.id,
-                    lead_id=lead_id, step_id=cs.id,
-                    status="ready", subject="Hi",
-                    body_preview="body", model_used="stub",
-                )
-                session.add(draft); await session.flush()
-                send = Send(
-                    tenant_id=a["tenant_id"], step_id=step.id,
-                    mailbox_id=mb.id, draft_id=draft.id,
-                    to_email="lc@x.example", from_email="c@x.example",
-                    subject="Hi", body_text="body",
-                    message_id_header=mid,
-                    status="sent", sent_at=datetime.utcnow(),
-                )
-                session.add(send); await session.flush()
+        async with factory() as session, session.begin():
+            await set_tenant_for_session(session, a["tenant_id"])
+            camp = Campaign(
+                tenant_id=a["tenant_id"], name="cnt-camp",
+                style_sample_emails=[],
+            )
+            session.add(camp)
+            await session.flush()
+            cs = CampaignStep(
+                tenant_id=a["tenant_id"], campaign_id=camp.id,
+                step_number=1, delay_days=0, subject_template="Hi",
+            )
+            session.add(cs)
+            await session.flush()
+            mb = Mailbox(
+                tenant_id=a["tenant_id"], provider="gmail",
+                email_address="c@x.example",
+            )
+            session.add(mb)
+            run = SequenceRun(
+                tenant_id=a["tenant_id"], campaign_id=camp.id,
+                name="cnt-run",
+            )
+            session.add(run)
+            await session.flush()
+            step = SequenceStep(
+                tenant_id=a["tenant_id"], run_id=run.id, lead_id=lead_id,
+                campaign_step_id=cs.id, status="sent",
+                scheduled_at=datetime.utcnow(),
+                sent_at=datetime.utcnow(),
+            )
+            session.add(step)
+            await session.flush()
+            draft = Draft(
+                tenant_id=a["tenant_id"], campaign_id=camp.id,
+                lead_id=lead_id, step_id=cs.id,
+                status="ready", subject="Hi",
+                body_preview="body", model_used="stub",
+            )
+            session.add(draft)
+            await session.flush()
+            send = Send(
+                tenant_id=a["tenant_id"], step_id=step.id,
+                mailbox_id=mb.id, draft_id=draft.id,
+                to_email="lc@x.example", from_email="c@x.example",
+                subject="Hi", body_text="body",
+                message_id_header=mid,
+                status="sent", sent_at=datetime.utcnow(),
+            )
+            session.add(send)
+            await session.flush()
 
         # Reply (counter-reply).
-        import hmac
         import hashlib
+        import hmac
+
         from outreach_os.core.config import get_settings
         settings = get_settings()
         webhook_secret = settings.inbound_webhook_secret or "test-webhook-secret"

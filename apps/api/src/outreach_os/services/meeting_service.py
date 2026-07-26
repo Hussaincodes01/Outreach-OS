@@ -17,8 +17,9 @@ from __future__ import annotations
 
 import logging
 import uuid
+from collections.abc import Sequence
 from datetime import datetime, timedelta, timezone
-from typing import Any, Sequence
+from typing import Any
 
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -119,7 +120,7 @@ class MeetingService:
                     "slot_count": len(slots),
                 },
             )
-        except Exception:  # noqa: BLE001
+        except Exception:
             log.warning("notification dispatch failed for meeting proposal", exc_info=True)
 
         return meeting
@@ -193,7 +194,7 @@ class MeetingService:
                     "start": start.isoformat(),
                 },
             )
-        except Exception:  # noqa: BLE001
+        except Exception:
             log.warning("notification dispatch failed for meeting confirm", exc_info=True)
 
         return meeting
@@ -232,7 +233,7 @@ class MeetingService:
                 target_type="meeting",
                 target_id=meeting.id,
             )
-        except Exception:  # noqa: BLE001
+        except Exception:
             log.warning("notification dispatch failed for meeting decline", exc_info=True)
 
         return meeting
@@ -270,7 +271,7 @@ class MeetingService:
                 target_type="meeting",
                 target_id=meeting.id,
             )
-        except Exception:  # noqa: BLE001
+        except Exception:
             log.warning("notification dispatch failed for meeting cancel", exc_info=True)
 
         return meeting
@@ -286,7 +287,7 @@ class MeetingService:
             )
         ).scalar_one_or_none()
 
-    async def list(
+    async def list_meetings(
         self,
         *,
         tenant_id: uuid.UUID,
@@ -454,4 +455,4 @@ class MeetingService:
         return fallback_start + timedelta(minutes=duration_minutes)
 
 
-__all__ = ["MeetingService", "MeetingError"]
+__all__ = ["MeetingError", "MeetingService"]

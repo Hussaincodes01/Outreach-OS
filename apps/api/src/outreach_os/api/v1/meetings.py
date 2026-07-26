@@ -19,6 +19,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from outreach_os.api.deps import AuthContext, get_current_user, get_scoped_db
+from outreach_os.domain.models.meeting import Meeting
 from outreach_os.domain.schemas.phase5 import (
     MEETING_STATUSES,
     MeetingConfirmIn,
@@ -33,7 +34,7 @@ log = logging.getLogger(__name__)
 router = APIRouter(prefix="/meetings", tags=["meetings"])
 
 
-def _to_out(m) -> MeetingOut:
+def _to_out(m: Meeting) -> MeetingOut:
     return MeetingOut(
         id=m.id,
         created_at=m.created_at,
@@ -76,7 +77,7 @@ async def list_meetings(
             status_code=400, detail=f"invalid status: {status_!r}"
         )
     svc = MeetingService(db)
-    items, total = await svc.list(
+    items, total = await svc.list_meetings(
         tenant_id=user.tenant_id,
         status=status_,
         lead_id=lead_id,

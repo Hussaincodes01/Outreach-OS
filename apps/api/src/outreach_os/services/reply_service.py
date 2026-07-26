@@ -264,7 +264,7 @@ class ReplyService:
                     event_key=key_for_cls,
                     severity=severity,
                     title=f"{reply.from_email} \u2014 {cls}",
-                    body=(reply.snippet or "")[:280] if reply.snippet else None,
+                    body=(reply.body_text or "")[:280] or None,
                     target_type="reply",
                     target_id=reply.id,
                     payload={
@@ -273,7 +273,7 @@ class ReplyService:
                         "lead_id": str(step.lead_id) if step else None,
                     },
                 )
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:
             log.warning("notification dispatch failed on reply: %s", exc)
 
 
@@ -306,7 +306,7 @@ class ReplyService:
                     meeting_id=open_meeting.id,
                     slot_index=0,
                 )
-            except Exception as exc:  # noqa: BLE001
+            except Exception as exc:
                 log.warning(
                     "auto-confirm meeting failed lead=%s meeting=%s: %s",
                     step.lead_id, open_meeting.id, exc,
@@ -321,7 +321,7 @@ class ReplyService:
                     reply_id=reply.id,
                     mailbox_id=send.mailbox_id,
                 )
-            except Exception as exc:  # noqa: BLE001
+            except Exception as exc:
                 log.warning(
                     "auto-create meeting failed lead=%s: %s", step.lead_id, exc,
                 )
@@ -334,7 +334,7 @@ class ReplyService:
                 await crm_service.sync_meeting(
                     tenant_id=tenant_id, meeting_id=open_meeting.id
                 )
-            except Exception as exc:  # noqa: BLE001
+            except Exception as exc:
                 log.warning(
                     "crm sync after confirm failed meeting=%s: %s",
                     open_meeting.id, exc,

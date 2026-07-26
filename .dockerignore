@@ -1,0 +1,56 @@
+# Docker build context is the repo root (see infra/docker/Dockerfile.*).
+# Without this file the context includes node_modules, .venv and .next —
+# hundreds of MB that also get COPY'd into the images and shadow the
+# dependencies installed inside the build stages.
+
+# Secrets — must never land in an image layer.
+.env
+.env.*
+!.env.example
+!.env.*.example
+*.pem
+*.key
+*.p12
+*.pfx
+
+# Dependencies (installed inside the images)
+node_modules/
+**/node_modules/
+.venv/
+**/.venv/
+venv/
+**/venv/
+
+# Build output (regenerated inside the images)
+.next/
+**/.next/
+out/
+dist/
+build/
+*.tsbuildinfo
+
+# Python caches
+__pycache__/
+**/__pycache__/
+*.py[cod]
+.pytest_cache/
+**/.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# VCS, editors, local process files
+.git/
+.gitignore
+.idea/
+.vscode/
+.claude/
+*.log
+*.err.log
+*.pid
+
+# Not needed at build time
+docs/
+*.md
+!README.md

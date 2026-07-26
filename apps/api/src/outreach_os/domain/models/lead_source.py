@@ -12,9 +12,10 @@ from enum import Enum
 from typing import Any
 
 from sqlalchemy import CheckConstraint, ForeignKey, Index, Text
-from sqlalchemy.dialects.postgresql import JSONB, UUID as PG_UUID
+from sqlalchemy.dialects.postgresql import JSONB
+from sqlalchemy.dialects.postgresql import UUID as PG_UUID
 from sqlalchemy.orm import Mapped, mapped_column
-from sqlalchemy.sql.sqltypes import Boolean, TIMESTAMP
+from sqlalchemy.sql.sqltypes import TIMESTAMP, Boolean
 
 from outreach_os.core.db import Base
 
@@ -23,6 +24,7 @@ class LeadSourceKind(str, Enum):
     SERPER = "serper"
     COMPANY_SITE = "company_site"
     LINKEDIN_PROXYCURL = "linkedin_proxycurl"
+    SOCIAL_PROFILES = "social_profiles"
 
 
 class LeadSource(Base):
@@ -56,7 +58,7 @@ class LeadSource(Base):
             unique=True,
         ),
         CheckConstraint(
-            "source IN ('serper', 'company_site', 'linkedin_proxycurl')",
+            "source IN ('serper', 'company_site', 'linkedin_proxycurl', 'social_profiles')",
             name="ck_lead_source_kind",
         ),
     )

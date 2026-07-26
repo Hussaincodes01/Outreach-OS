@@ -1,13 +1,13 @@
 """Per-tenant lead_source config service.
 
-We auto-seed the three known sources (`serper`, `company_site`,
-`linkedin_proxycurl`) on first read for a tenant if none exist, so
-the UI can render a "check the boxes for what to enable" view
-without the customer having to create rows manually.
+We auto-seed every known source (see `VALID_SOURCES`) on first read for a
+tenant if none exist, so the UI can render a "check the boxes for what to
+enable" view without the customer having to create rows manually.
 """
 from __future__ import annotations
 
 import uuid
+from typing import Any
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -46,7 +46,7 @@ async def update_source(
     tenant_id: uuid.UUID,
     source: str,
     is_enabled: bool | None,
-    config: dict | None,
+    config: dict[str, Any] | None,
 ) -> LeadSource:
     if source not in VALID_SOURCES:
         from outreach_os.core.errors import ValidationError
@@ -70,4 +70,4 @@ async def update_source(
 
 
 # Re-export the enum for convenience.
-__all__ = ["list_sources", "update_source", "LeadSourceKind"]
+__all__ = ["LeadSourceKind", "list_sources", "update_source"]

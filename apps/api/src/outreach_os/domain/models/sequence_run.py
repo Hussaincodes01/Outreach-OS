@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import uuid
 from datetime import datetime
+from typing import TYPE_CHECKING
 
 from sqlalchemy import CheckConstraint, ForeignKey, Index, Text
 from sqlalchemy.dialects.postgresql import UUID as PG_UUID
@@ -15,6 +16,10 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 from sqlalchemy.sql.sqltypes import TIMESTAMP
 
 from outreach_os.core.db import Base
+
+if TYPE_CHECKING:
+    from outreach_os.domain.models.sequence_step import SequenceStep
+
 
 
 class SequenceRun(Base):
@@ -49,7 +54,7 @@ class SequenceRun(Base):
         TIMESTAMP(timezone=True), nullable=False, server_default="now()"
     )
 
-    steps: Mapped[list["SequenceStep"]] = relationship(  # noqa: F821
+    steps: Mapped[list[SequenceStep]] = relationship(
         "SequenceStep",
         back_populates="run",
         cascade="all, delete-orphan",

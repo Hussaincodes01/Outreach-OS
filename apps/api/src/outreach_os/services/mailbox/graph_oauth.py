@@ -4,7 +4,7 @@ from __future__ import annotations
 import secrets
 import uuid
 from datetime import datetime, timedelta, timezone
-from typing import Any
+from typing import Any, cast
 from urllib.parse import urlencode
 
 import httpx
@@ -40,16 +40,22 @@ def build_state_token(*, user_id: uuid.UUID, tenant_id: uuid.UUID, email_hint: s
         "nonce": secrets.token_urlsafe(16),
         "exp": int((datetime.now(timezone.utc) + timedelta(minutes=10)).timestamp()),
     }
-    return jwt.encode(
-        payload, settings.jwt_secret.get_secret_value(), algorithm=settings.jwt_alg
+    return cast(
+        "str",
+        jwt.encode(
+            payload, settings.jwt_secret.get_secret_value(), algorithm=settings.jwt_alg
+        ),
     )
 
 
 def verify_state_token(token: str) -> dict[str, Any]:
     settings = get_settings()
     try:
-        return jwt.decode(
-            token, settings.jwt_secret.get_secret_value(), algorithms=[settings.jwt_alg]
+        return cast(
+            "dict[str, Any]",
+            jwt.decode(
+                token, settings.jwt_secret.get_secret_value(), algorithms=[settings.jwt_alg]
+            ),
         )
     except Exception as exc:
         raise OAuthError(f"invalid OAuth state: {exc}") from exc
@@ -90,4 +96,4 @@ async def exchange_code_for_tokens(code: str) -> dict[str, Any]:
         raise OAuthError(
             f"Microsoft token exchange failed: {resp.status_code} {resp.text[:200]}"
         )
-    return resp.json()
+    return cast("dict[str, Any]", resp.json())

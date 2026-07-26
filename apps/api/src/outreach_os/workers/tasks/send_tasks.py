@@ -5,6 +5,7 @@ import asyncio
 import logging
 import uuid
 from datetime import datetime
+from typing import Any
 
 from outreach_os.workers.celery_app import celery_app
 from outreach_os.workers.tasks.send import send_due_async
@@ -12,8 +13,8 @@ from outreach_os.workers.tasks.send import send_due_async
 log = logging.getLogger(__name__)
 
 
-@celery_app.task(name="outreach_os.workers.send_due")
-def send_due(tenant_id: str | None = None) -> dict:
+@celery_app.task(name="outreach_os.workers.send_due")  # type: ignore[untyped-decorator]
+def send_due(tenant_id: str | None = None) -> dict[str, Any]:
     """Celery wrapper. In eager mode this runs the async core on a
     brand-new event loop in a thread, then returns."""
     log.info("send_due start tenant=%s", tenant_id)

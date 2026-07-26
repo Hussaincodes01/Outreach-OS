@@ -112,6 +112,13 @@ class Settings(BaseSettings):
     scraping_http_timeout: float = 20.0
     # Maximum seconds a single scraping_job may run before being marked failed.
     scraping_job_timeout: int = 600
+    # Fallback to StealthyFetcher (headless browser) when Fetcher gets blocked.
+    scraping_use_stealth_fallback: bool = True
+    # Respect robots.txt Disallow/Crawl-delay directives.
+    scraping_robots_obey: bool = True
+    # Fetch the lead's website during agent research for live context.
+    scraping_live_research_enabled: bool = True
+    scraping_live_research_max_chars: int = 600
     # Celery — when true, tasks run synchronously inside the calling process
     # (used by tests; do not enable in production).
     celery_task_always_eager: bool = False
@@ -240,7 +247,7 @@ class Settings(BaseSettings):
         return value
 
     @model_validator(mode="after")
-    def _enforce_production_safety(self) -> "Settings":
+    def _enforce_production_safety(self) -> Settings:
         """Fail fast at startup if a production/staging deployment is running
         with insecure development defaults. Catching this at boot is far safer
         than discovering it after the service is live."""
@@ -260,7 +267,7 @@ class Settings(BaseSettings):
             try:
                 if len(base64.urlsafe_b64decode(vault)) < 32:
                     problems.append("VAULT_MASTER_KEY must decode to at least 32 bytes")
-            except Exception:  # noqa: BLE001
+            except Exception:
                 problems.append("VAULT_MASTER_KEY must be valid base64")
 
         if not self.inbound_webhook_secret:

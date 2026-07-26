@@ -40,14 +40,14 @@ async def invite_user(
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT, detail="email already in use"
         )
-    from outreach_os.domain.models.user import UserRole as _UR
+    from outreach_os.domain.models.user import UserRole
 
     new_user = await user_service.create_user(
         db,
         tenant_id=user.tenant_id,
         email=payload.email,
         password=payload.password,
-        role=_UR(payload.role),
+        role=UserRole(payload.role),
     )
     await write_audit_event(
         db,

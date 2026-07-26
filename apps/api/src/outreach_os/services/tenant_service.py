@@ -9,14 +9,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from outreach_os.domain.models.tenant import Tenant
 
-
 _SLUG_RE = re.compile(r"[^a-z0-9]+")
 
 
 def derive_slug(tenant_name: str) -> str:
     base = _SLUG_RE.sub("-", tenant_name.lower()).strip("-")
-    base = base[:50] or "tenant"
-    return base
+    return base[:50] or "tenant"
 
 
 async def get_tenant(session: AsyncSession, tenant_id: uuid.UUID) -> Tenant | None:

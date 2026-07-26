@@ -10,7 +10,7 @@ The public surface is small:
 - `usage_summary(tenant_id)` -> UsageSummaryOut
 
 The service never blocks the API request: `check_within_limits`
-raises `BillingLimitExceeded`, which the API layer translates to
+raises `BillingLimitExceededError`, which the API layer translates to
 HTTP 402.
 """
 from __future__ import annotations
@@ -37,7 +37,7 @@ class BillingError(Exception):
     """Base billing exception."""
 
 
-class BillingLimitExceeded(BillingError):
+class BillingLimitExceededError(BillingError):
     def __init__(self, *, metric: str, used: int, cap: int) -> None:
         super().__init__(f"{metric}: used {used} of cap {cap}")
         self.metric = metric
@@ -45,7 +45,7 @@ class BillingLimitExceeded(BillingError):
         self.cap = cap
 
 
-class PlanNotFound(BillingError):
+class PlanNotFoundError(BillingError):
     pass
 
 
@@ -107,7 +107,7 @@ async def effective_plan(
     starter = await get_plan_by_code(session, "starter")
     if starter is not None:
         return starter
-    raise PlanNotFound("no starter plan configured")
+    raise PlanNotFoundError("no starter plan configured")
 
 
 # ---------- usage gates ----------
@@ -120,7 +120,7 @@ async def check_within_limits(
     metric: str,
     n: int = 1,
 ) -> None:
-    """Raise BillingLimitExceeded if recording `n` more units of `metric`
+    """Raise BillingLimitExceededError if recording `n` more units of `metric`
     would push the tenant over their plan's monthly cap.
 
     Called *before* performing the work. If the work succeeds, the
@@ -149,7 +149,7 @@ async def check_within_limits(
     cap = cap_map[metric]
     used = used_map[metric]
     if used + n > cap:
-        raise BillingLimitExceeded(metric=metric, used=used, cap=cap)
+        raise BillingLimitExceededError(metric=metric, used=used, cap=cap)
 
 
 async def record_usage(
@@ -187,7 +187,7 @@ async def record_usage(
             elif metric in ("llm_token_in", "llm_token_out"):
                 tenant.month_usage_llm_tokens += quantity
         await session.flush()
-    except Exception:  # noqa: BLE001
+    except Exception:
         log.exception("record_usage failed tenant=%s metric=%s", tenant_id, metric)
 
 
@@ -231,16 +231,15 @@ async def start_checkout(
 ) -> str:
     plan = await get_plan_by_code(session, plan_code)
     if plan is None:
-        raise PlanNotFound(f"plan {plan_code!r} not found")
+        raise PlanNotFoundError(f"plan {plan_code!r} not found")
     sub = await active_subscription(session, tenant_id=tenant_id)
     client = get_billing_client()
-    url = client.create_checkout_session(
+    return client.create_checkout_session(
         customer_id=sub.provider_customer_id if sub else None,
         price_lookup_key=f"plan_{plan_code}",
         success_url=success_url,
         cancel_url=cancel_url,
     )
-    return url
 
 
 async def start_portal(
@@ -315,7 +314,7 @@ async def apply_subscription_event(
     """
     plan = await get_plan_by_code(session, plan_code)
     if plan is None:
-        raise PlanNotFound(f"plan {plan_code!r} not found")
+        raise PlanNotFoundError(f"plan {plan_code!r} not found")
     sub = await active_subscription(session, tenant_id=tenant_id)
     now = datetime.now(timezone.utc)
     if sub is None:
@@ -402,8 +401,8 @@ async def rollup_usage_counters(session: AsyncSession) -> int:
 
 __all__ = [
     "BillingError",
-    "BillingLimitExceeded",
-    "PlanNotFound",
+    "BillingLimitExceededError",
+    "PlanNotFoundError",
     "active_subscription",
     "apply_subscription_event",
     "check_within_limits",

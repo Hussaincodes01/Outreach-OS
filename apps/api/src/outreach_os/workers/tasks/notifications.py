@@ -34,7 +34,7 @@ from outreach_os.workers.celery_app import celery_app
 log = logging.getLogger(__name__)
 
 
-@celery_app.task(name="outreach_os.notifications.send_email_digest")
+@celery_app.task(name="outreach_os.notifications.send_email_digest")  # type: ignore[untyped-decorator]
 def send_email_digest() -> dict[str, Any]:
     """Pick up undelivered email-digest notifications, group by tenant,
     send one email per tenant per day, and mark them as delivered.
@@ -58,8 +58,9 @@ async def _send_email_digest_async() -> dict[str, Any]:
     # tenant we know about (read from the master `tenant` table which
     # is not RLS-protected).
     async with session_scope() as session:
-        from outreach_os.domain.models.tenant import Tenant
         from sqlalchemy import select as sa_select
+
+        from outreach_os.domain.models.tenant import Tenant
         tenant_rows = (
             await session.execute(sa_select(Tenant.id))
         ).scalars().all()
@@ -93,7 +94,7 @@ async def _send_email_digest_async() -> dict[str, Any]:
                 ).scalars().all():
                     n.delivered_email = True
             sent_count += len(items)
-        except Exception:  # noqa: BLE001
+        except Exception:
             log.exception("digest send failed tenant=%s", tenant_id)
 
     return {"groups": len(grouped), "items_sent": sent_count}

@@ -6,7 +6,6 @@ from httpx import AsyncClient
 
 from .conftest import bearer, signup, unique_email
 
-
 pytestmark = pytest.mark.asyncio
 
 

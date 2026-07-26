@@ -15,9 +15,10 @@ import uuid
 from datetime import datetime
 
 from sqlalchemy import CheckConstraint, ForeignKey, Index, Text
-from sqlalchemy.dialects.postgresql import JSONB, UUID as PG_UUID
+from sqlalchemy.dialects.postgresql import JSONB
+from sqlalchemy.dialects.postgresql import UUID as PG_UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
-from sqlalchemy.sql.sqltypes import Boolean, TIMESTAMP
+from sqlalchemy.sql.sqltypes import TIMESTAMP, Boolean
 
 from outreach_os.core.db import Base
 
@@ -54,7 +55,7 @@ class Campaign(Base):
     # Use a string forward reference to break the import cycle (campaign_step
     # imports this class for its FK). Use cascade="all, delete-orphan" so
     # removing a step from `campaign.steps` deletes the row.
-    steps: Mapped[list["CampaignStep"]] = relationship(  # type: ignore[name-defined]  # noqa: F821
+    steps: Mapped[list[CampaignStep]] = relationship(  # type: ignore[name-defined]  # noqa: F821
         "CampaignStep",
         back_populates="campaign",
         cascade="all, delete-orphan",

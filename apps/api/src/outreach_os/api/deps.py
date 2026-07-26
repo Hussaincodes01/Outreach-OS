@@ -52,9 +52,8 @@ async def get_db() -> AsyncIterator[AsyncSession]:
     tenant from a signed state token).
     """
     factory = get_session_factory()
-    async with factory() as session:
-        async with session.begin():
-            yield session
+    async with factory() as session, session.begin():
+        yield session
 
 
 async def get_current_user(
@@ -87,10 +86,9 @@ async def get_scoped_db(
     is authenticated. Use this in every authenticated business endpoint.
     """
     factory = get_session_factory()
-    async with factory() as session:
-        async with session.begin():
-            await set_tenant_for_session(session, str(user.tenant_id))
-            yield session
+    async with factory() as session, session.begin():
+        await set_tenant_for_session(session, str(user.tenant_id))
+        yield session
 
 
-__all__ = ["get_db", "get_scoped_db", "get_current_user", "AuthContext"]
+__all__ = ["AuthContext", "get_current_user", "get_db", "get_scoped_db"]

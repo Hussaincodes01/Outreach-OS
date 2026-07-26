@@ -17,32 +17,29 @@ from __future__ import annotations
 
 import json
 import uuid
-from datetime import datetime, timezone
 
 import pytest
 import pytest_asyncio
 from httpx import ASGITransport, AsyncClient
 from sqlalchemy import select, text
 
+from outreach_os.core.audit import write_audit_event
 from outreach_os.core.auth import create_access_token
-from outreach_os.core.config import get_settings
-from outreach_os.core.db import get_engine, session_scope
+from outreach_os.core.db import session_scope
 from outreach_os.core.mailer import StubMailer, set_mailer_client
 from outreach_os.core.slack_client import StubSlackClient, set_slack_client
 from outreach_os.core.tenancy import set_tenant_for_session
-from outreach_os.core.ws_manager import set_ws_manager
+
+# In-memory WS stub.
+from outreach_os.core.ws_manager import TenantConnectionManager, set_ws_manager
 from outreach_os.domain.models.notification import Notification
 from outreach_os.domain.models.notification_preference import NotificationPreference
 from outreach_os.domain.models.slack_webhook import SlackWebhook
 from outreach_os.domain.models.tenant import Tenant
 from outreach_os.domain.models.user import AppUser, UserRole
 from outreach_os.main import app
-from outreach_os.core.audit import write_audit_event
 from outreach_os.services.credential_lookup import create_credential
 from outreach_os.services.notification_service import publish
-
-# In-memory WS stub.
-from outreach_os.core.ws_manager import TenantConnectionManager
 
 
 @pytest_asyncio.fixture
@@ -67,7 +64,6 @@ async def stub_slack() -> StubSlackClient:
 
 async def _make_user_with_tenant() -> tuple[uuid.UUID, uuid.UUID, str]:
     """Create a tenant + owner; return (tenant_id, user_id, access_token)."""
-    settings = get_settings()
     suffix = uuid.uuid4().hex[:8]
     async with session_scope() as session:
         await session.execute(text("SET LOCAL app.current_tenant = ''"))
@@ -100,7 +96,7 @@ async def _make_user_with_tenant() -> tuple[uuid.UUID, uuid.UUID, str]:
 
 @pytest.mark.asyncio
 async def test_audit_json_export_streams_all_rows(stub_ws):
-    tid, uid, token = await _make_user_with_tenant()
+    tid, _uid, token = await _make_user_with_tenant()
     async with session_scope() as session:
         await set_tenant_for_session(session, str(tid))
         for i in range(3):
@@ -129,7 +125,7 @@ async def test_audit_json_export_streams_all_rows(stub_ws):
 
 @pytest.mark.asyncio
 async def test_audit_csv_export_streams_all_rows(stub_ws):
-    tid, uid, token = await _make_user_with_tenant()
+    tid, _uid, token = await _make_user_with_tenant()
     async with session_scope() as session:
         await set_tenant_for_session(session, str(tid))
         for i in range(2):
@@ -155,7 +151,7 @@ async def test_audit_csv_export_streams_all_rows(stub_ws):
 
 @pytest.mark.asyncio
 async def test_publish_creates_notification_row(stub_ws, stub_slack):
-    tid, uid, _tok = await _make_user_with_tenant()
+    tid, _uid, _tok = await _make_user_with_tenant()
     async with session_scope() as session:
         await set_tenant_for_session(session, str(tid))
         n = await publish(
@@ -181,10 +177,10 @@ async def test_publish_creates_notification_row(stub_ws, stub_slack):
 
 @pytest.mark.asyncio
 async def test_publish_broadcasts_to_ws(stub_ws, stub_slack):
-    tid, uid, _tok = await _make_user_with_tenant()
+    tid, _uid, _tok = await _make_user_with_tenant()
     # Simulate one connected client.
     import asyncio
-    from fastapi import WebSocket
+
 
     class _FakeWS:
         def __init__(self) -> None:
@@ -218,7 +214,7 @@ async def test_publish_broadcasts_to_ws(stub_ws, stub_slack):
 
 @pytest.mark.asyncio
 async def test_notification_list_unread_count(stub_ws, stub_slack):
-    tid, uid, token = await _make_user_with_tenant()
+    tid, _uid, token = await _make_user_with_tenant()
     async with session_scope() as session:
         await set_tenant_for_session(session, str(tid))
         for i in range(4):
@@ -263,7 +259,7 @@ async def test_notification_list_unread_count(stub_ws, stub_slack):
 
 @pytest.mark.asyncio
 async def test_notification_event_keys_endpoint(stub_ws, stub_slack):
-    tid, uid, token = await _make_user_with_tenant()
+    _tid, _uid, token = await _make_user_with_tenant()
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://test") as ac:
         r = await ac.get(
@@ -282,7 +278,7 @@ async def test_notification_event_keys_endpoint(stub_ws, stub_slack):
 
 @pytest.mark.asyncio
 async def test_preference_upsert(stub_ws, stub_slack):
-    tid, uid, token = await _make_user_with_tenant()
+    _tid, _uid, token = await _make_user_with_tenant()
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://test") as ac:
         # Initially empty.
@@ -328,7 +324,7 @@ async def test_preference_upsert(stub_ws, stub_slack):
 
 @pytest.mark.asyncio
 async def test_publish_with_slack_pref_fans_out(stub_ws, stub_slack):
-    tid, uid, _tok = await _make_user_with_tenant()
+    tid, _uid, _tok = await _make_user_with_tenant()
     # Wire up a webhook + a preference that enables slack.
     async with session_scope() as session:
         await set_tenant_for_session(session, str(tid))
@@ -374,7 +370,7 @@ async def test_publish_with_slack_pref_fans_out(stub_ws, stub_slack):
 
 @pytest.mark.asyncio
 async def test_publish_with_no_slack_pref_doesnt_call(stub_ws, stub_slack):
-    tid, uid, _tok = await _make_user_with_tenant()
+    tid, _uid, _tok = await _make_user_with_tenant()
     async with session_scope() as session:
         await set_tenant_for_session(session, str(tid))
         await publish(
@@ -391,7 +387,7 @@ async def test_publish_with_no_slack_pref_doesnt_call(stub_ws, stub_slack):
 
 @pytest.mark.asyncio
 async def test_slack_webhook_crud(stub_ws, stub_slack):
-    tid, uid, token = await _make_user_with_tenant()
+    _tid, _uid, token = await _make_user_with_tenant()
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://test") as ac:
         r = await ac.post(
@@ -449,7 +445,7 @@ async def test_email_digest_groups_by_tenant_and_sends(stub_ws, stub_slack):
     mailer = StubMailer()
     set_mailer_client(mailer)
     try:
-        tid, uid, _tok = await _make_user_with_tenant()
+        tid, _uid, _tok = await _make_user_with_tenant()
         async with session_scope() as session:
             await set_tenant_for_session(session, str(tid))
             for i in range(3):
@@ -494,8 +490,8 @@ async def test_email_digest_groups_by_tenant_and_sends(stub_ws, stub_slack):
 @pytest.mark.asyncio
 async def test_notifications_isolated_by_tenant(stub_ws, stub_slack):
     """A notification for tenant A must not appear in tenant B's list."""
-    tid_a, uid_a, tok_a = await _make_user_with_tenant()
-    tid_b, uid_b, tok_b = await _make_user_with_tenant()
+    tid_a, _uid_a, tok_a = await _make_user_with_tenant()
+    tid_b, _uid_b, tok_b = await _make_user_with_tenant()
     assert tid_a != tid_b
     async with session_scope() as session:
         await set_tenant_for_session(session, str(tid_a))

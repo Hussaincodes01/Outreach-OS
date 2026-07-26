@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import logging
 from functools import lru_cache
-from typing import Any
+from typing import Any, cast
 
 import boto3
 from botocore.client import Config
@@ -96,17 +96,20 @@ def download_text(bucket: str, key: str) -> str:
         resp = client.get_object(Bucket=bucket, Key=key)
     except ClientError as exc:
         raise S3Error(f"download failed for s3://{bucket}/{key}: {exc}") from exc
-    return resp["Body"].read().decode("utf-8")
+    return cast("str", resp["Body"].read().decode("utf-8"))
 
 
 def presign_get(bucket: str, key: str, *, ttl: int | None = None) -> str:
     """Return a presigned GET URL with a short TTL. Used by the drafts API."""
     s = get_settings()
     client = get_s3_client()
-    return client.generate_presigned_url(
-        "get_object",
-        Params={"Bucket": bucket, "Key": key},
-        ExpiresIn=ttl or s.s3_presign_ttl,
+    return cast(
+        "str",
+        client.generate_presigned_url(
+            "get_object",
+            Params={"Bucket": bucket, "Key": key},
+            ExpiresIn=ttl or s.s3_presign_ttl,
+        ),
     )
 
 

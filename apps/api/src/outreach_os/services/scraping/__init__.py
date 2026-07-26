@@ -10,12 +10,12 @@ import logging
 from typing import Any
 
 from outreach_os.core.errors import OutreachError
-from outreach_os.services.scraping.sources import company_site, proxycurl, serper
 from outreach_os.services.scraping.raw_lead import RawLead
+from outreach_os.services.scraping.sources import company_site, proxycurl, serper, social_profiles
 
 log = logging.getLogger(__name__)
 
-VALID_SOURCES = ("serper", "company_site", "linkedin_proxycurl")
+VALID_SOURCES = ("serper", "company_site", "linkedin_proxycurl", "social_profiles")
 
 
 class SourceConfigError(OutreachError):
@@ -69,6 +69,13 @@ def run_source(
             log.info("proxycurl: no linkedin_urls in ICP extra; returning empty")
             return []
         return proxycurl.fetch_profiles(api_key=api_key, linkedin_urls=urls[:limit])
+
+    if source == "social_profiles":
+        urls = icp.get("extra", {}).get("social_urls", [])
+        if not urls:
+            log.info("social_profiles: no social_urls in ICP extra; returning empty")
+            return []
+        return social_profiles.scrape_profiles(urls=urls[:limit])
 
     raise SourceConfigError(f"unhandled source: {source}")
 

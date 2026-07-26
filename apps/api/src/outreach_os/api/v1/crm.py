@@ -20,6 +20,8 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from outreach_os.api.deps import AuthContext, get_current_user, get_scoped_db
+from outreach_os.domain.models.crm_connection import CrmConnection
+from outreach_os.domain.models.crm_sync_event import CrmSyncEvent
 from outreach_os.domain.schemas.phase5 import (
     CRM_CONNECTION_STATUSES,
     CrmConnectionCreateIn,
@@ -29,15 +31,15 @@ from outreach_os.domain.schemas.phase5 import (
     CrmSyncEventOut,
     CrmSyncEventPage,
 )
-from outreach_os.services.crm_service import CrmService, CrmServiceError
 from outreach_os.services.billing_service import BillingError
+from outreach_os.services.crm_service import CrmService, CrmServiceError
 
 log = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/crm", tags=["crm"])
 
 
-def _conn_to_out(c) -> CrmConnectionOut:
+def _conn_to_out(c: CrmConnection) -> CrmConnectionOut:
     return CrmConnectionOut(
         id=c.id,
         created_at=c.created_at,
@@ -55,7 +57,7 @@ def _conn_to_out(c) -> CrmConnectionOut:
     )
 
 
-def _sync_to_out(s) -> CrmSyncEventOut:
+def _sync_to_out(s: CrmSyncEvent) -> CrmSyncEventOut:
     return CrmSyncEventOut(
         id=s.id,
         created_at=s.synced_at,
@@ -198,8 +200,9 @@ async def sync_connection(
     # sync_meeting fans out to ALL active connections; for a manual
     # "sync THIS connection" call, we instead filter to just this one
     # by temporarily setting status filter via a custom code path:
-    from outreach_os.domain.models.crm_connection import CrmConnection
     from sqlalchemy import select
+
+    from outreach_os.domain.models.crm_connection import CrmConnection
     target = (await db.execute(
         select(CrmConnection).where(
             CrmConnection.id == connection_id,
@@ -212,8 +215,8 @@ async def sync_connection(
             status_code=400, detail="connection is paused; resume to sync"
         )
     # Single-conn sync: bypass sync_meeting and call _sync_one directly.
-    from outreach_os.domain.models.meeting import Meeting
     from outreach_os.domain.models.lead import Lead
+    from outreach_os.domain.models.meeting import Meeting
     meeting = (await db.execute(
         select(Meeting).where(
             Meeting.id == meeting_id, Meeting.tenant_id == user.tenant_id
@@ -231,7 +234,7 @@ async def sync_connection(
             tenant_id=user.tenant_id, conn=target, meeting=meeting, lead=lead
         )
     except BillingError as exc:
-        raise HTTPException(status_code=402, detail=str(exc))
+        raise HTTPException(status_code=402, detail=str(exc)) from exc
     return CrmSyncEventPage(
         items=[_sync_to_out(event)], total=1, limit=1, offset=0,
     )

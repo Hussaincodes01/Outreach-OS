@@ -1,11 +1,12 @@
-"""HTTP client for outbound scraping calls.
+"""HTTP client for API-based scraping sources (Serper, Proxycurl).
 
-We use a single `httpx.Client` per process (sync — Scrapling and the
-parsing paths are sync). The Celery worker holds one; the API process
-holds one (used for "Test connection" type calls in the future).
+These sources are REST APIs, not websites — they don't need Scrapling's
+browser bypass or TLS impersonation. The company_site source uses
+Scrapling's Fetcher directly (see sources/company_site.py).
 """
 from __future__ import annotations
 
+import contextlib
 from threading import Lock
 
 import httpx
@@ -40,8 +41,7 @@ def reset_for_tests() -> None:
     global _client
     with _lock:
         if _client is not None:
-            try:
+            # Best-effort close: the client is being discarded either way.
+            with contextlib.suppress(Exception):
                 _client.close()
-            except Exception:  # noqa: BLE001
-                pass
             _client = None

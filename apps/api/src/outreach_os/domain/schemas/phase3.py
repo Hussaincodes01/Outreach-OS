@@ -9,7 +9,6 @@ from pydantic import Field
 
 from outreach_os.domain.schemas.common import ApiModel, IdTimestampMixin
 
-
 # --- Campaign ---
 
 CAMPAIGN_STATUSES = ("draft", "active", "paused", "archived")

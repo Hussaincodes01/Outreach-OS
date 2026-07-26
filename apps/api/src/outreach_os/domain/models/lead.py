@@ -10,8 +10,9 @@ import uuid
 from datetime import datetime
 from typing import Any
 
-from sqlalchemy import CheckConstraint, ForeignKey, Index, Text
-from sqlalchemy.dialects.postgresql import CITEXT, JSONB, UUID as PG_UUID
+from sqlalchemy import CheckConstraint, ForeignKey, Index, Text, text
+from sqlalchemy.dialects.postgresql import CITEXT, JSONB
+from sqlalchemy.dialects.postgresql import UUID as PG_UUID
 from sqlalchemy.orm import Mapped, mapped_column
 from sqlalchemy.sql.sqltypes import TIMESTAMP
 
@@ -68,10 +69,13 @@ class Lead(Base):
             "tenant_id",
             "email",
             unique=True,
-            postgresql_where=Text("email IS NOT NULL"),
+            # `text(...)`, not the `Text` column type — the latter silently
+            # builds a type with length="email IS NOT NULL" instead of an
+            # index predicate (cf. notification.py / subscription.py).
+            postgresql_where=text("email IS NOT NULL"),
         ),
         CheckConstraint(
-            "source IN ('serper', 'company_site', 'linkedin_proxycurl')",
+            "source IN ('serper', 'company_site', 'linkedin_proxycurl', 'social_profiles')",
             name="ck_lead_source",
         ),
     )

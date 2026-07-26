@@ -19,6 +19,7 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from outreach_os.core.config import get_settings
+from outreach_os.core.llm import LLMClient
 from outreach_os.core.mailer import (
     MailerClient,
     MailerError,
@@ -42,7 +43,7 @@ class SendError(RuntimeError):
 
 
 class SendService:
-    def __init__(self, session: AsyncSession, *, llm=None, mailer: MailerClient | None = None) -> None:
+    def __init__(self, session: AsyncSession, *, llm: LLMClient | None = None, mailer: MailerClient | None = None) -> None:
         self.session = session
         self.llm = llm
         self.mailer = mailer or get_mailer_client()
@@ -225,7 +226,7 @@ class SendService:
                         "lead_id": str(lead.id),
                     },
                 )
-            except Exception:  # noqa: BLE001
+            except Exception:
                 log.warning("notification dispatch failed for send.failed", exc_info=True)
             return send
 
@@ -246,7 +247,7 @@ class SendService:
                 source="send",
                 source_id=send.id,
             )
-        except Exception:  # noqa: BLE001
+        except Exception:
             log.warning("record_usage(send) failed", exc_info=True)
         return send
 

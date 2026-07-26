@@ -15,11 +15,11 @@ from typing import Final
 from outreach_os.core.config import get_settings
 from outreach_os.core.redis_client import get_redis
 
-
 SCRAPE_DEFAULTS: Final[dict[str, int]] = {
     "serper": 100,
     "company_site": 30,
     "linkedin_proxycurl": 10,
+    "social_profiles": 20,
 }
 
 AUTH_DEFAULTS: Final[dict[str, int]] = {

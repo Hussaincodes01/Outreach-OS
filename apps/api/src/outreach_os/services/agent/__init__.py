@@ -22,7 +22,7 @@ import logging
 import uuid
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import Any
+from typing import Any, cast
 
 from langgraph.graph import END, START, StateGraph
 from sqlalchemy import select
@@ -34,6 +34,7 @@ from outreach_os.domain.models.campaign import Campaign
 from outreach_os.domain.models.campaign_step import CampaignStep
 from outreach_os.domain.models.lead import Lead
 from outreach_os.services.rag_service import RAGService, RetrievedChunk, format_chunks_for_prompt
+from outreach_os.services.scraping.live_research import scrape_live_context
 
 log = logging.getLogger(__name__)
 
@@ -58,6 +59,7 @@ class AgentState:
     campaign: dict[str, Any] = field(default_factory=dict)
     step: dict[str, Any] = field(default_factory=dict)
     rag_chunks: list[dict[str, Any]] = field(default_factory=list)
+    live_context: str = ""
     niche: dict[str, Any] = field(default_factory=dict)
     style: dict[str, Any] = field(default_factory=dict)
     draft_subject: str = ""
@@ -177,7 +179,7 @@ def _try_parse_json(text_str: str) -> dict[str, Any] | None:
         return None
     text_str = text_str.strip()
     try:
-        return json.loads(text_str)
+        return cast("dict[str, Any] | None", json.loads(text_str))
     except json.JSONDecodeError:
         pass
     # Find the first '{' and last '}'.
@@ -185,7 +187,7 @@ def _try_parse_json(text_str: str) -> dict[str, Any] | None:
     end = text_str.rfind("}")
     if start >= 0 and end > start:
         try:
-            return json.loads(text_str[start : end + 1])
+            return cast("dict[str, Any] | None", json.loads(text_str[start : end + 1]))
         except json.JSONDecodeError:
             return None
     return None
@@ -212,9 +214,12 @@ async def _node_research(
     if query:
         try:
             chunks = await rag.search(tenant_id=state.tenant_id, query=query)
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:
             # RAG failure must not abort the run; we just skip it.
             log.warning("rag search failed: %s", exc)
+
+    # Live research: scrape the lead's website for current context.
+    live_ctx = await asyncio.to_thread(scrape_live_context, lead.domain)
 
     return {
         "lead": {
@@ -250,10 +255,12 @@ async def _node_research(
             }
             for c in chunks
         ],
+        "live_context": live_ctx,
         "trace": {
             "research": {
                 "query": query,
                 "rag_chunk_count": len(chunks),
+                "live_context_chars": len(live_ctx),
             }
         },
     }
@@ -352,9 +359,6 @@ async def _node_draft(
             for c in state.rag_chunks
         ]
     )
-    first_name = lead.get("first_name") or (
-        (lead.get("full_name") or "").split(" ")[0] if lead.get("full_name") else "there"
-    )
     style = state.style
     user_prompt = (
         f"LEAD:\n{json.dumps(lead, default=str, indent=2)}\n\n"
@@ -364,6 +368,8 @@ async def _node_draft(
         f"SUBJECT_TEMPLATE: {step.get('subject_template')}\n\n"
         f"CASE_STUDIES (use at most one if relevant):\n{chunks_text}\n"
     )
+    if state.live_context:
+        user_prompt += f"\nLIVE COMPANY CONTEXT (from their website, use if relevant):\n{state.live_context}\n"
     resp = await asyncio.to_thread(
         llm.chat,
         state.model,

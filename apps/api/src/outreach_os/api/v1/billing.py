@@ -22,6 +22,7 @@ from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import RedirectResponse
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from outreach_os.api.deps import AuthContext, get_current_user, get_scoped_db
@@ -44,7 +45,6 @@ from outreach_os.domain.schemas.phase7 import (
     UsageSummaryOut,
 )
 from outreach_os.services import billing_service
-from sqlalchemy import select
 
 logger = logging.getLogger(__name__)
 
@@ -125,8 +125,8 @@ async def start_checkout(
             success_url=success,
             cancel_url=cancel,
         )
-    except billing_service.PlanNotFound as exc:
-        raise HTTPException(status_code=404, detail=str(exc))
+    except billing_service.PlanNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
     return CheckoutOut(checkout_url=url, provider=settings.billing_provider)
 
 
@@ -276,8 +276,8 @@ async def stripe_webhook(request: Request) -> StripeWebhookAck:
         event = get_billing_client().verify_webhook_signature(
             payload=raw, signature=sig
         )
-    except Exception as e:  # noqa: BLE001
-        raise HTTPException(status_code=400, detail=f"signature: {e}")
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"signature: {e}") from e
 
     event_type = event.get("type")
     data = event.get("data", {}).get("object", {})
@@ -307,7 +307,8 @@ async def stripe_webhook(request: Request) -> StripeWebhookAck:
         # subscription object, not the session object.
         cps = data.get("current_period_start")
         cpe = data.get("current_period_end")
-        from datetime import datetime as _dt, timezone as _tz
+        from datetime import datetime as _dt
+        from datetime import timezone as _tz
         cps_dt = _dt.fromtimestamp(cps, _tz.utc) if cps else None
         cpe_dt = _dt.fromtimestamp(cpe, _tz.utc) if cpe else None
         async with session_scope() as session:

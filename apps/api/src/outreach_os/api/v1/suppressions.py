@@ -5,6 +5,7 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from outreach_os.api.deps import AuthContext, get_current_user, get_scoped_db
+from outreach_os.domain.models.suppression import Suppression
 from outreach_os.domain.schemas.phase4 import (
     SuppressionCreateIn,
     SuppressionOut,
@@ -15,7 +16,7 @@ from outreach_os.services.suppression_service import SuppressionError, Suppressi
 router = APIRouter(prefix="/suppressions", tags=["suppressions"])
 
 
-def _to_out(s) -> SuppressionOut:
+def _to_out(s: Suppression) -> SuppressionOut:
     return SuppressionOut(
         id=s.id,
         created_at=s.created_at,

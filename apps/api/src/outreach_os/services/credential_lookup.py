@@ -38,7 +38,7 @@ async def get_credential_secrets(
     for cred in result.scalars().all():
         try:
             payload = vault_service.decrypt_for_tenant(str(tenant_id), cred.ciphertext)
-        except Exception:  # noqa: BLE001
+        except Exception:
             log.warning("credential_decrypt_failed", extra={"credential_id": str(cred.id), "kind": cred.kind})
             continue
         # Common conventions: {"api_key": "..."} or {"token": "..."}.
@@ -76,7 +76,7 @@ async def get_decrypted_credential(
         return None
     try:
         return vault_service.decrypt_for_tenant(str(tenant_id), cred.ciphertext)
-    except Exception:  # noqa: BLE001
+    except Exception:
         log.warning("credential_decrypt_failed", extra={"credential_id": str(credential_id)})
         return None
 

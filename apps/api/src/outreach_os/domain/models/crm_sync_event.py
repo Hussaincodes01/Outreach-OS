@@ -9,14 +9,19 @@ from __future__ import annotations
 
 import uuid
 from datetime import datetime
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from sqlalchemy import CheckConstraint, ForeignKey, Index, Text
-from sqlalchemy.dialects.postgresql import JSONB, UUID as PG_UUID
+from sqlalchemy.dialects.postgresql import JSONB
+from sqlalchemy.dialects.postgresql import UUID as PG_UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from sqlalchemy.sql.sqltypes import TIMESTAMP
 
 from outreach_os.core.db import Base
+
+if TYPE_CHECKING:
+    from outreach_os.domain.models.meeting import Meeting
+
 
 
 class CrmSyncEvent(Base):
@@ -47,7 +52,7 @@ class CrmSyncEvent(Base):
         TIMESTAMP(timezone=True), nullable=False, server_default="now()"
     )
 
-    meeting: Mapped["Meeting | None"] = relationship("Meeting", back_populates="sync_events")  # noqa: F821
+    meeting: Mapped[Meeting | None] = relationship("Meeting", back_populates="sync_events")
 
     __table_args__ = (
         Index("ix_crm_sync_event_tenant", "tenant_id"),

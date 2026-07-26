@@ -20,7 +20,7 @@ import math
 import struct
 from typing import Any
 
-from outreach_os.core.llm import LLMClient, LLMResponse, LLMUsage
+from outreach_os.core.llm import LLMResponse, LLMUsage
 
 
 def _text_to_vec(text: str, dim: int = 1536) -> list[float]:

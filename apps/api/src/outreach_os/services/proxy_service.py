@@ -81,8 +81,8 @@ def decrypt_url(tenant_id: str, ciphertext: bytes | None) -> str | None:
 
 
 __all__ = [
-    "list_proxies",
     "create_proxy",
-    "delete_proxy",
     "decrypt_url",
+    "delete_proxy",
+    "list_proxies",
 ]

@@ -5,7 +5,6 @@ PUT /v1/notification-preferences  \u2014 upsert (event_key + channels)
 """
 from __future__ import annotations
 
-import uuid
 from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends

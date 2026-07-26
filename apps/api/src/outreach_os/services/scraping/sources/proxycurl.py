@@ -14,7 +14,7 @@ typically uploads a seed list from Sales Navigator exports.
 from __future__ import annotations
 
 import logging
-from typing import Any
+from typing import Any, cast
 
 import httpx
 from tenacity import (
@@ -60,7 +60,7 @@ def _fetch_profile(api_key: str, linkedin_url: str) -> dict[str, Any]:
     if resp.status_code >= 500:
         raise ProxycurlError(f"proxycurl 5xx (status {resp.status_code})")
     resp.raise_for_status()
-    return resp.json()
+    return cast("dict[str, Any]", resp.json())
 
 
 def _domain_from_company(company: dict[str, Any] | None) -> str | None:

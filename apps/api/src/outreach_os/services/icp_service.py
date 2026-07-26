@@ -123,7 +123,7 @@ async def create_scraping_job(
     return job
 
 
-async def dispatch_scrape_job(job_id: uuid.UUID, tenant_id: uuid.UUID) -> dict | None:
+async def dispatch_scrape_job(job_id: uuid.UUID, tenant_id: uuid.UUID) -> dict[str, Any] | None:
     """Run the scrape job, in-process in tests, queued to Celery in prod.
 
     In production we return None immediately and a Celery worker picks

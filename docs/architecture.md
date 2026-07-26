@@ -1,7 +1,6 @@
 # Architecture
 
-This is a stub. For the canonical architecture and the full multi-phase roadmap,
-see [`../01-MASTER-PLAN.md`](../01-MASTER-PLAN.md).
+Summary of the layer choices and the two invariants the test suite enforces.
 
 ## Phase 0+1 scope (this build)
 

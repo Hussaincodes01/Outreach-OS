@@ -12,8 +12,7 @@ from __future__ import annotations
 
 import logging
 import secrets
-import uuid
-from typing import Any, Protocol
+from typing import Any, Protocol, cast
 
 import httpx
 
@@ -79,7 +78,7 @@ class StubBillingClient:
     ) -> dict[str, Any]:
         # Stub: no signature check. Tests can override.
         import json
-        return json.loads(payload.decode("utf-8"))
+        return cast("dict[str, Any]", json.loads(payload.decode("utf-8")))
 
 
 class StripeBillingClient:
@@ -117,7 +116,7 @@ class StripeBillingClient:
             timeout=10.0,
         )
         resp.raise_for_status()
-        return resp.json()["url"]
+        return cast("str", resp.json()["url"])
 
     def create_portal_session(self, *, customer_id: str, return_url: str) -> str:
         resp = httpx.post(
@@ -127,7 +126,7 @@ class StripeBillingClient:
             timeout=10.0,
         )
         resp.raise_for_status()
-        return resp.json()["url"]
+        return cast("str", resp.json()["url"])
 
     def verify_webhook_signature(
         self, *, payload: bytes, signature: str
@@ -155,7 +154,7 @@ class StripeBillingClient:
         if not hmac.compare_digest(expected, v1):
             raise ValueError("invalid signature")
         import json
-        return json.loads(payload.decode("utf-8"))
+        return cast("dict[str, Any]", json.loads(payload.decode("utf-8")))
 
 
 _client: BillingClient | None = None
@@ -184,8 +183,8 @@ def set_billing_client(client: BillingClient | None) -> None:
 
 __all__ = [
     "BillingClient",
-    "StubBillingClient",
     "StripeBillingClient",
+    "StubBillingClient",
     "get_billing_client",
     "set_billing_client",
 ]

@@ -1,7 +1,7 @@
 """Audit log: append-only enforcement + hash chain integrity."""
 from __future__ import annotations
 
-import uuid
+import itertools
 
 import pytest
 from httpx import AsyncClient
@@ -10,7 +10,6 @@ from sqlalchemy import text
 from outreach_os.core.db import session_scope
 
 from .conftest import bearer, signup, unique_email
-
 
 pytestmark = pytest.mark.asyncio
 
@@ -35,12 +34,11 @@ async def test_update_audit_event_is_blocked(client: AsyncClient) -> None:
         result = await session.execute(text("SELECT id FROM audit_event LIMIT 1"))
         ev_id = result.scalar()
         assert ev_id is not None, "expected at least one audit row from signup"
-        with pytest.raises(Exception) as excinfo:
+        with pytest.raises(Exception, match=r"(?i)append-only"):
             await session.execute(
                 text("UPDATE audit_event SET action = 'tampered' WHERE id = :id"),
                 {"id": str(ev_id)},
             )
-        assert "append-only" in str(excinfo.value).lower()
 
 
 async def test_delete_audit_event_is_blocked(client: AsyncClient) -> None:
@@ -59,11 +57,10 @@ async def test_delete_audit_event_is_blocked(client: AsyncClient) -> None:
         result = await session.execute(text("SELECT id FROM audit_event LIMIT 1"))
         ev_id = result.scalar()
         assert ev_id is not None
-        with pytest.raises(Exception) as excinfo:
+        with pytest.raises(Exception, match=r"(?i)append-only"):
             await session.execute(
                 text("DELETE FROM audit_event WHERE id = :id"), {"id": str(ev_id)}
             )
-        assert "append-only" in str(excinfo.value).lower()
 
 
 async def test_hash_chain_links_within_tenant(client: AsyncClient) -> None:
@@ -103,7 +100,7 @@ async def test_hash_chain_links_within_tenant(client: AsyncClient) -> None:
         ).fetchall()
 
     assert rows[0][1] is None, "first row should have null prev_hash"
-    for prev, curr in zip(rows, rows[1:]):
+    for prev, curr in itertools.pairwise(rows):
         if prev[2] is not None and curr[1] is not None:
             assert bytes(curr[1]) == bytes(prev[2]), (
                 "hash chain broken — tampering or bug detected"

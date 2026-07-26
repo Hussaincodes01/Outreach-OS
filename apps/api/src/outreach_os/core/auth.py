@@ -9,15 +9,18 @@ For multi-issuer setups, swap to RS256 + JWKS.
 from __future__ import annotations
 
 import json
+import logging
 import secrets
 import uuid
 from datetime import datetime, timedelta, timezone
-from typing import Any
+from typing import Any, cast
 
 from jose import JWTError, jwt
 from passlib.context import CryptContext
 
 from outreach_os.core.config import get_settings
+
+log = logging.getLogger(__name__)
 
 _pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 
@@ -45,9 +48,11 @@ def _get_active_secret() -> str:
         try:
             keys = json.loads(settings.jwt_secret_keys.get_secret_value())
             active_kid = settings.jwt_active_key_id or "1"
-            return keys.get(active_kid, settings.jwt_secret.get_secret_value())
+            return cast("str", keys.get(active_kid, settings.jwt_secret.get_secret_value()))
         except Exception:
-            pass
+            # Malformed JWT_SECRET_KEYS: fall back to the single secret rather
+            # than failing every request, but make it visible in the logs.
+            log.warning("JWT_SECRET_KEYS is not valid JSON; using JWT_SECRET", exc_info=True)
     return settings.jwt_secret.get_secret_value()
 
 
@@ -60,10 +65,10 @@ def _get_all_secrets() -> list[str]:
             keys = json.loads(settings.jwt_secret_keys.get_secret_value())
             secrets_list.extend(keys.values())
         except Exception:
-            pass
-    # Deduplicate while preserving order
-    seen = set()
-    return [s for s in secrets_list if not (s in seen or seen.add(s))]
+            # Same as above: verification still works against JWT_SECRET.
+            log.warning("JWT_SECRET_KEYS is not valid JSON; using JWT_SECRET", exc_info=True)
+    # Deduplicate while preserving order.
+    return list(dict.fromkeys(secrets_list))
 
 
 def _build_token(
@@ -87,10 +92,13 @@ def _build_token(
     }
     if extra:
         payload.update(extra)
-    return jwt.encode(
-        payload,
-        _get_active_secret(),
-        algorithm=settings.jwt_alg,
+    return cast(
+        "str",
+        jwt.encode(
+            payload,
+            _get_active_secret(),
+            algorithm=settings.jwt_alg,
+        ),
     )
 
 
@@ -141,7 +149,7 @@ def decode_token(token: str, *, expected_type: str) -> dict[str, Any]:
         raise TokenError(f"expected {expected_type} token, got {payload.get('typ')}")
     if not payload.get("sub") or not payload.get("tid"):
         raise TokenError("token missing required claims")
-    return payload
+    return cast("dict[str, Any]", payload)
 
 
 def generate_csrf_token() -> str:

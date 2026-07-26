@@ -11,14 +11,19 @@ from sqlalchemy.ext.asyncio import async_engine_from_config
 
 from outreach_os.core.config import get_settings
 from outreach_os.core.db import Base
-import outreach_os.domain.models  # noqa: F401 — register all models on Base.metadata
+import outreach_os.domain.models
 
 config = context.config
 if config.config_file_name is not None:
     fileConfig(config.config_file_name)
 
 settings = get_settings()
-config.set_main_option("sqlalchemy.url", settings.database_url)
+# Respect a URL supplied by the caller (alembic.ini ships with an empty
+# `sqlalchemy.url`, so anything non-empty was set deliberately — e.g. the
+# test suite pointing migrations at the superuser connection). Only fall
+# back to the application config when nothing was provided.
+if not config.get_main_option("sqlalchemy.url", None):
+    config.set_main_option("sqlalchemy.url", settings.database_url)
 
 target_metadata = Base.metadata
 

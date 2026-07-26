@@ -106,7 +106,7 @@ async def run_scraping_job_async(job_id: uuid.UUID, tenant_id: uuid.UUID) -> dic
                     config=dict(src.config or {}),
                     limit=job.requested_count,
                 )
-            except Exception as exc:  # noqa: BLE001
+            except Exception as exc:
                 log.exception("scrape source %s failed", source)
                 summary["sources"][source] = {"error": str(exc)[:200]}
                 continue
@@ -147,7 +147,7 @@ async def run_scraping_job_async(job_id: uuid.UUID, tenant_id: uuid.UUID) -> dic
                     source="scraping_job",
                     source_id=job.id,
                 )
-        except Exception:  # noqa: BLE001
+        except Exception:
             log.exception("record_usage(lead_scraped) failed")
 
         try:
@@ -166,13 +166,13 @@ async def run_scraping_job_async(job_id: uuid.UUID, tenant_id: uuid.UUID) -> dic
                     "total_duplicates": total_duplicates,
                 },
             )
-        except Exception:  # noqa: BLE001
+        except Exception:
             log.exception("notification dispatch failed for scraping.completed")
 
         return summary
 
 
-@celery_app.task(name="outreach_os.scrape.run_job", max_retries=2)
+@celery_app.task(name="outreach_os.scrape.run_job", max_retries=2)  # type: ignore[untyped-decorator]
 def run_scraping_job(job_id: str, tenant_id: str) -> dict[str, Any]:
     """Celery entrypoint. In production this runs in a worker process.
     With `task_always_eager=True` (test mode) we run the async core on
@@ -191,7 +191,7 @@ def run_scraping_job(job_id: str, tenant_id: str) -> dict[str, Any]:
     def _runner() -> None:
         try:
             result_box.append(asyncio.run(run_scraping_job_async(job_uuid, tenant_uuid)))
-        except BaseException as exc:  # noqa: BLE001
+        except BaseException as exc:
             error_box.append(exc)
 
     t = threading.Thread(target=_runner, daemon=True)
@@ -205,7 +205,7 @@ def run_scraping_job(job_id: str, tenant_id: str) -> dict[str, Any]:
         def _mark_failed() -> None:
             try:
                 asyncio.run(_mark_job_failed_async(job_uuid, tenant_uuid, str(exc)[:500]))
-            except Exception:  # noqa: BLE001
+            except Exception:
                 log.exception("failed to mark job %s as failed", job_id)
         _mark_failed()
         raise exc
@@ -234,5 +234,5 @@ async def _mark_job_failed_async(job_id: uuid.UUID, tenant_id: uuid.UUID, error:
                     target_id=job_id,
                     payload={"found_count": job.found_count or 0},
                 )
-            except Exception:  # noqa: BLE001
+            except Exception:
                 log.exception("notification dispatch failed for scraping.failed")

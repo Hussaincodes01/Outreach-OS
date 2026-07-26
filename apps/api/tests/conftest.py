@@ -38,7 +38,6 @@ os.environ.setdefault("AUTH_RATE_LIMITS_PER_MINUTE", '{"login": 10000, "signup":
 os.environ.setdefault("INBOUND_WEBHOOK_SECRET", "test-webhook-secret")
 
 import httpx
-import pytest
 import pytest_asyncio
 from sqlalchemy import text
 
@@ -50,7 +49,6 @@ from outreach_os.main import app
 def _apply_migrations():
     """Apply Alembic migrations once per test session (synchronous,
     run from a worker thread to avoid clashing with the event loop)."""
-    import asyncio
     from concurrent.futures import ThreadPoolExecutor
 
     from alembic import command
@@ -72,10 +70,16 @@ def _apply_migrations():
             conn.exec_driver_sql("CREATE EXTENSION IF NOT EXISTS vector")
         eng.dispose()
 
-        # 2) Run the Alembic migration as the app role. DDL is permitted
-        #    via the CREATE-on-database grant in the initdb script.
+        # 2) Run the Alembic migration as the ADMIN (superuser) role, exactly
+        #    like the `migrate` service in docker-compose.prod.yml. Migration
+        #    0010 does `ALTER FUNCTION ... OWNER TO postgres`, which the
+        #    non-superuser app role cannot do ("must be able to SET ROLE").
+        #    Running as admin also mirrors production ownership: tables are
+        #    owned by postgres and the app role reaches them through the
+        #    grants in infra/docker/postgres/initdb, so RLS still applies to
+        #    the app role (a table owner would bypass it).
         cfg = Config("alembic.ini")
-        cfg.set_main_option("sqlalchemy.url", os.environ["DATABASE_URL"])
+        cfg.set_main_option("sqlalchemy.url", admin_url)
         command.upgrade(cfg, "head")
 
     with ThreadPoolExecutor(max_workers=1) as ex:
@@ -108,7 +112,11 @@ def _apply_migrations():
         import sqlalchemy as _sa
         from sqlalchemy import text as _t
 
-        url = os.environ["DATABASE_URL"].replace("postgresql+asyncpg", "postgresql+psycopg2")
+        # Admin connection: DROP POLICY / ALTER TABLE require table ownership,
+        # and migrations now run as the superuser (see step 2), so the tables
+        # are owned by the admin role rather than the app role.
+        admin_url = os.environ.get("DATABASE_URL_ADMIN", os.environ["DATABASE_URL"])
+        url = admin_url.replace("postgresql+asyncpg", "postgresql+psycopg2")
         eng = _sa.create_engine(url)
         with eng.begin() as conn:
             conn.execute(_t(

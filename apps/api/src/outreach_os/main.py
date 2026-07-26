@@ -1,10 +1,12 @@
 """FastAPI application entry point."""
 from __future__ import annotations
 
+from collections.abc import AsyncIterator, Awaitable, Callable
 from contextlib import asynccontextmanager
+from typing import TypeAlias
 
 import sentry_sdk
-from fastapi import FastAPI, Request, status, Response
+from fastapi import FastAPI, Request, Response, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
@@ -13,8 +15,8 @@ from outreach_os.api.v1 import (
     auth,
     billing,
     campaigns,
-    crm,
     credentials,
+    crm,
     drafts,
     gdpr,
     icps,
@@ -28,8 +30,8 @@ from outreach_os.api.v1 import (
     proxies,
     replies,
     scraping_jobs,
-    sequences,
     sends,
+    sequences,
     slack_webhooks,
     suppressions,
     tenants,
@@ -49,9 +51,12 @@ from outreach_os.core.errors import (
 )
 from outreach_os.core.logging import configure_logging, get_logger
 
+# Starlette's BaseHTTPMiddleware dispatch signature.
+_CallNext: TypeAlias = Callable[[Request], Awaitable[Response]]
+
 
 @asynccontextmanager
-async def lifespan(app: FastAPI):  # noqa: ARG001
+async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     configure_logging()
     settings = get_settings()
     log = get_logger("outreach_os.startup")
@@ -80,7 +85,7 @@ app = FastAPI(
 
 # Security headers middleware
 @app.middleware("http")
-async def add_security_headers(request: Request, call_next):
+async def add_security_headers(request: Request, call_next: _CallNext) -> Response:
     response = await call_next(request)
     # Prevent clickjacking
     response.headers["X-Frame-Options"] = "DENY"
@@ -99,7 +104,7 @@ async def add_security_headers(request: Request, call_next):
 
 # Request size limit middleware (1MB default)
 @app.middleware("http")
-async def limit_body_size(request: Request, call_next):
+async def limit_body_size(request: Request, call_next: _CallNext) -> Response:
     content_length = request.headers.get("content-length")
     if content_length and int(content_length) > 1_000_000:  # 1MB
         return Response("Payload too large", status_code=413)
@@ -199,7 +204,7 @@ async def ready() -> dict[str, str]:
     try:
         async with engine.connect() as conn:
             await conn.execute(text("SELECT 1"))
-    except Exception as exc:  # noqa: BLE001
+    except Exception as exc:
         return {"status": "unavailable", "error": str(exc)[:200]}
     return {"status": "ok"}
 

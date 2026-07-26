@@ -8,7 +8,6 @@ from pydantic import Field
 
 from outreach_os.domain.schemas.common import ApiModel, IdTimestampMixin
 
-
 # --- Sequence run ---
 
 SEQUENCE_RUN_STATUSES = ("running", "paused", "stopped", "completed")

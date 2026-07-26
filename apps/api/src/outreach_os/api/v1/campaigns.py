@@ -2,11 +2,14 @@
 from __future__ import annotations
 
 import uuid
+from collections.abc import Sequence
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from outreach_os.api.deps import AuthContext, get_current_user, get_scoped_db
+from outreach_os.domain.models.campaign import Campaign
+from outreach_os.domain.models.campaign_step import CampaignStep
 from outreach_os.domain.schemas.phase3 import (
     CampaignCreate,
     CampaignOut,
@@ -19,7 +22,7 @@ from outreach_os.services.campaign_service import CampaignError, CampaignService
 router = APIRouter(prefix="/campaigns", tags=["campaigns"])
 
 
-def _to_step_out(s) -> CampaignStepOut:
+def _to_step_out(s: CampaignStep) -> CampaignStepOut:
     return CampaignStepOut(
         id=s.id,
         created_at=s.created_at,
@@ -32,7 +35,7 @@ def _to_step_out(s) -> CampaignStepOut:
     )
 
 
-def _to_campaign_out(c, steps) -> CampaignOut:
+def _to_campaign_out(c: Campaign, steps: Sequence[CampaignStep]) -> CampaignOut:
     return CampaignOut(
         id=c.id,
         created_at=c.created_at,

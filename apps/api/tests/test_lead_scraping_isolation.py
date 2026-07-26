@@ -7,6 +7,8 @@ from __future__ import annotations
 import pytest
 from httpx import AsyncClient
 
+from outreach_os.domain.schemas.lead_scraping import VALID_SOURCES
+
 from .conftest import bearer, signup, unique_email
 
 pytestmark = pytest.mark.asyncio
@@ -69,15 +71,18 @@ async def test_delete_other_tenant_icp_returns_404(client: AsyncClient) -> None:
 async def test_lead_sources_autoseed_isolated(client: AsyncClient) -> None:
     a = await signup(client, email=unique_email(), password="pw-12345-AbCde", tenant_name="Acme")
     b = await signup(client, email=unique_email(), password="pw-12345-AbCde", tenant_name="Globex")
+    # Autoseed covers every known source; assert against the single source of
+    # truth so adding a source doesn't silently leave this test behind.
+    expected = set(VALID_SOURCES)
     resp = await client.get("/v1/lead-sources", headers=bearer(a["access_token"]))
     assert resp.status_code == 200
     sources = {r["source"] for r in resp.json()}
-    assert sources == {"serper", "company_site", "linkedin_proxycurl"}
+    assert sources == expected
 
     # B sees its own set (autoseeded independently).
     resp = await client.get("/v1/lead-sources", headers=bearer(b["access_token"]))
     assert resp.status_code == 200
-    assert {r["source"] for r in resp.json()} == {"serper", "company_site", "linkedin_proxycurl"}
+    assert {r["source"] for r in resp.json()} == expected
 
 
 async def test_list_leads_isolated_per_tenant(client: AsyncClient) -> None:
@@ -87,9 +92,7 @@ async def test_list_leads_isolated_per_tenant(client: AsyncClient) -> None:
     # Direct insert via the lead_service API path (bypasses /v1/leads which
     # has no POST; the worker is what writes leads in production). We use
     # get_scoped_db indirectly by going through the service module.
-    from sqlalchemy import text
 
-    from outreach_os.api.deps import get_scoped_db
     from outreach_os.core.db import get_session_factory
     from outreach_os.core.tenancy import set_tenant_for_session
     from outreach_os.services import lead_service
@@ -100,24 +103,23 @@ async def test_list_leads_isolated_per_tenant(client: AsyncClient) -> None:
         (a, "acmecustomer.example"),
         (b, "globexcustomer.example"),
     ):
-        async with factory() as session:
-            async with session.begin():
-                tenant_uuid = __import__("uuid").UUID(token_pair["tenant_id"])
-                await set_tenant_for_session(session, str(tenant_uuid))
-                await lead_service.insert_leads(
-                    session,
-                    tenant_id=tenant_uuid,
-                    job_id=None,
-                    raw_leads=[
-                        RawLead(
-                            source="company_site",
-                            first_name="Alex",
-                            email=f"alex@{sample_domain}",
-                            domain=sample_domain,
-                            company_name="Sample",
-                        )
-                    ],
-                )
+        async with factory() as session, session.begin():
+            tenant_uuid = __import__("uuid").UUID(token_pair["tenant_id"])
+            await set_tenant_for_session(session, str(tenant_uuid))
+            await lead_service.insert_leads(
+                session,
+                tenant_id=tenant_uuid,
+                job_id=None,
+                raw_leads=[
+                    RawLead(
+                        source="company_site",
+                        first_name="Alex",
+                        email=f"alex@{sample_domain}",
+                        domain=sample_domain,
+                        company_name="Sample",
+                    )
+                ],
+            )
 
     # Each tenant sees only its own lead.
     resp = await client.get("/v1/leads", headers=bearer(a["access_token"]))

@@ -32,7 +32,7 @@ dependencies = [
     "structlog>=24.1,<25.0",
     "sentry-sdk[fastapi]>=1.40,<2.0",
     "litellm>=1.30,<2.0",
-    "scrapling>=0.2,<1.0",
+    "scrapling[fetchers]>=0.2,<1.0",
     "tenacity>=8.2,<9.0",
     "boto3>=1.34,<2.0",
     "tiktoken>=0.7,<1.0",
@@ -105,6 +105,9 @@ ignore = [
 [tool.ruff.lint.per-file-ignores]
 "tests/*" = ["S", "N"]
 "alembic/*" = ["E", "F", "W", "I", "N", "UP"]
+# flake8-pytest-style only makes sense in the test suite. In src it misfires on
+# any endpoint whose name starts with `test_` (e.g. POST /credentials/{id}/test).
+"src/*" = ["PT"]
 
 [tool.mypy]
 python_version = "3.10"

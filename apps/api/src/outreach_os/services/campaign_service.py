@@ -6,9 +6,10 @@ relies on the caller (an RLS-bound session) to enforce isolation.
 from __future__ import annotations
 
 import uuid
-from typing import Sequence
+from collections.abc import Sequence
+from typing import Any, cast
 
-from sqlalchemy import delete, select
+from sqlalchemy import CursorResult, delete, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
@@ -58,14 +59,14 @@ class CampaignService:
         result = await self.session.execute(
             select(Campaign)
             .where(Campaign.tenant_id == tenant_id)
-            .options(selectinload(Campaign.steps))  # type: ignore[attr-defined]
+            .options(selectinload(Campaign.steps))
             .order_by(Campaign.created_at.desc())
         )
         campaigns: list[Campaign] = list(result.scalars().all())
         # `selectinload` should populate steps; sort each campaign's steps.
         for c in campaigns:
-            c.steps.sort(key=lambda s: s.step_number)  # type: ignore[attr-defined]
-        return [(c, list(c.steps)) for c in campaigns]  # type: ignore[attr-defined]
+            c.steps.sort(key=lambda s: s.step_number)
+        return [(c, list(c.steps)) for c in campaigns]
 
     async def get_campaign(
         self, *, tenant_id: uuid.UUID, campaign_id: uuid.UUID
@@ -74,13 +75,13 @@ class CampaignService:
             select(Campaign)
             .where(Campaign.tenant_id == tenant_id)
             .where(Campaign.id == campaign_id)
-            .options(selectinload(Campaign.steps))  # type: ignore[attr-defined]
+            .options(selectinload(Campaign.steps))
         )
         campaign = result.scalar_one_or_none()
         if campaign is None:
             return None
-        campaign.steps.sort(key=lambda s: s.step_number)  # type: ignore[attr-defined]
-        return campaign, list(campaign.steps)  # type: ignore[attr-defined]
+        campaign.steps.sort(key=lambda s: s.step_number)
+        return campaign, list(campaign.steps)
 
     # --- Writes ---
 
@@ -131,7 +132,7 @@ class CampaignService:
             select(Campaign)
             .where(Campaign.tenant_id == tenant_id)
             .where(Campaign.id == campaign_id)
-            .options(selectinload(Campaign.steps))  # type: ignore[attr-defined]
+            .options(selectinload(Campaign.steps))
         )
         campaign = result.scalar_one_or_none()
         if campaign is None:
@@ -156,8 +157,8 @@ class CampaignService:
             await self.session.flush()
         except IntegrityError as exc:
             raise CampaignError(f"campaign name already exists: {data.name!r}") from exc
-        campaign.steps.sort(key=lambda s: s.step_number)  # type: ignore[attr-defined]
-        return campaign, list(campaign.steps)  # type: ignore[attr-defined]
+        campaign.steps.sort(key=lambda s: s.step_number)
+        return campaign, list(campaign.steps)
 
     async def replace_steps(
         self,
@@ -205,9 +206,12 @@ class CampaignService:
     async def delete_campaign(
         self, *, tenant_id: uuid.UUID, campaign_id: uuid.UUID
     ) -> bool:
-        result = await self.session.execute(
-            delete(Campaign)
-            .where(Campaign.tenant_id == tenant_id)
-            .where(Campaign.id == campaign_id)
+        result = cast(
+            "CursorResult[Any]",
+            await self.session.execute(
+                delete(Campaign)
+                .where(Campaign.tenant_id == tenant_id)
+                .where(Campaign.id == campaign_id)
+            ),
         )
         return (result.rowcount or 0) > 0

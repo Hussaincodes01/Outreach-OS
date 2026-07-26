@@ -6,6 +6,7 @@ These tests use the FakeLLMClient (deterministic) and the StubMailer
 from __future__ import annotations
 
 import pytest
+from sqlalchemy import select as _select
 
 from outreach_os.core.db import get_session_factory
 from outreach_os.core.llm import set_llm_client
@@ -13,16 +14,14 @@ from outreach_os.core.mailer import set_mailer_client
 from outreach_os.core.tenancy import set_tenant_for_session
 from outreach_os.domain.models.tenant import Tenant
 from outreach_os.services.send_service import SendService
-from outreach_os.services.sequence_service import SequenceService
 from tests.conftest import bearer, signup
 from tests.fake_llm import FakeLLMClient
 
 
 @pytest.fixture(autouse=True)
-def _fake_llm_and_mailer():
+def fake_llm_and_mailer():
     fake = FakeLLMClient()
     set_llm_client(fake)
-    mailer = set_mailer_client.__self__ if False else None  # type: ignore
     from outreach_os.core.mailer import StubMailer
     stub = StubMailer()
     set_mailer_client(stub)
@@ -33,13 +32,12 @@ def _fake_llm_and_mailer():
 
 async def _ensure_tenant(tenant_id, slug: str, name: str) -> None:
     factory = get_session_factory()
-    async with factory() as session:
-        async with session.begin():
-            existing = await session.get(Tenant, tenant_id)
-            if existing is None:
-                session.add(
-                    Tenant(id=tenant_id, slug=slug, name=name, plan="starter", status="active")
-                )
+    async with factory() as session, session.begin():
+        existing = await session.get(Tenant, tenant_id)
+        if existing is None:
+            session.add(
+                Tenant(id=tenant_id, slug=slug, name=name, plan="starter", status="active")
+            )
 
 
 # --- Sequence run: RLS + lifecycle ---
@@ -80,13 +78,12 @@ async def test_sequence_runs_are_isolated_per_tenant(client):
     # Seed a lead for A and start a run.
     from outreach_os.domain.models.lead import Lead
     factory = get_session_factory()
-    async with factory() as session:
-        async with session.begin():
-            await set_tenant_for_session(session, a["tenant_id"])
-            lead = Lead(tenant_id=a["tenant_id"], source="serper", first_name="A", email="a-lead@x.example")
-            session.add(lead)
-            await session.flush()
-            a_lead = str(lead.id)
+    async with factory() as session, session.begin():
+        await set_tenant_for_session(session, a["tenant_id"])
+        lead = Lead(tenant_id=a["tenant_id"], source="serper", first_name="A", email="a-lead@x.example")
+        session.add(lead)
+        await session.flush()
+        a_lead = str(lead.id)
 
     r = await client.post(
         "/v1/sequences", headers=bearer(a["access_token"]),
@@ -124,15 +121,14 @@ async def test_start_run_skips_suppressed_leads(client):
     from outreach_os.domain.models.lead import Lead
     from outreach_os.domain.models.suppression import Suppression
     factory = get_session_factory()
-    async with factory() as session:
-        async with session.begin():
-            await set_tenant_for_session(session, a["tenant_id"])
-            l1 = Lead(tenant_id=a["tenant_id"], source="serper", email="keep@x.example", first_name="K")
-            l2 = Lead(tenant_id=a["tenant_id"], source="serper", email="drop@x.example", first_name="D")
-            session.add_all([l1, l2])
-            await session.flush()
-            session.add(Suppression(tenant_id=a["tenant_id"], email="drop@x.example", reason="manual"))
-            keep_id, drop_id = str(l1.id), str(l2.id)
+    async with factory() as session, session.begin():
+        await set_tenant_for_session(session, a["tenant_id"])
+        l1 = Lead(tenant_id=a["tenant_id"], source="serper", email="keep@x.example", first_name="K")
+        l2 = Lead(tenant_id=a["tenant_id"], source="serper", email="drop@x.example", first_name="D")
+        session.add_all([l1, l2])
+        await session.flush()
+        session.add(Suppression(tenant_id=a["tenant_id"], email="drop@x.example", reason="manual"))
+        keep_id, drop_id = str(l1.id), str(l2.id)
 
     r = await client.post(
         "/v1/sequences", headers=bearer(a["access_token"]),
@@ -174,34 +170,33 @@ async def test_suppression_list_add_remove(client):
 
 # --- Send engine: happy path ---
 
-async def test_send_engine_fires_due_step(client, _fake_llm_and_mailer):
+async def test_send_engine_fires_due_step(client, fake_llm_and_mailer):
     a = await signup(client, email="a-snd@acme-customer.example", password="pw-12345-AbCde", tenant_name="A-snd")
     # Create campaign + mailbox + lead directly in DB.
     from outreach_os.domain.models.campaign import Campaign
     from outreach_os.domain.models.campaign_step import CampaignStep
-    from outreach_os.domain.models.mailbox import Mailbox
     from outreach_os.domain.models.lead import Lead
+    from outreach_os.domain.models.mailbox import Mailbox
     factory = get_session_factory()
-    async with factory() as session:
-        async with session.begin():
-            await set_tenant_for_session(session, a["tenant_id"])
-            camp = Campaign(
-                tenant_id=a["tenant_id"], name="snd-camp",
-                style_sample_emails=["Hi {first_name}, this is a test."],
-            )
-            session.add(camp)
-            await session.flush()
-            cs = CampaignStep(
-                tenant_id=a["tenant_id"], campaign_id=camp.id,
-                step_number=1, delay_days=0, subject_template="Quick question",
-            )
-            session.add(cs)
-            mb = Mailbox(tenant_id=a["tenant_id"], provider="gmail", email_address="me@sender.example")
-            session.add(mb)
-            lead = Lead(tenant_id=a["tenant_id"], source="serper", email="target@x.example", first_name="T")
-            session.add(lead)
-            await session.flush()
-            camp_id, cs_id, lead_id = camp.id, cs.id, lead.id
+    async with factory() as session, session.begin():
+        await set_tenant_for_session(session, a["tenant_id"])
+        camp = Campaign(
+            tenant_id=a["tenant_id"], name="snd-camp",
+            style_sample_emails=["Hi {first_name}, this is a test."],
+        )
+        session.add(camp)
+        await session.flush()
+        cs = CampaignStep(
+            tenant_id=a["tenant_id"], campaign_id=camp.id,
+            step_number=1, delay_days=0, subject_template="Quick question",
+        )
+        session.add(cs)
+        mb = Mailbox(tenant_id=a["tenant_id"], provider="gmail", email_address="me@sender.example")
+        session.add(mb)
+        lead = Lead(tenant_id=a["tenant_id"], source="serper", email="target@x.example", first_name="T")
+        session.add(lead)
+        await session.flush()
+        camp_id, _cs_id, lead_id = camp.id, cs.id, lead.id
 
     # Start the run.
     r = await client.post(
@@ -214,69 +209,65 @@ async def test_send_engine_fires_due_step(client, _fake_llm_and_mailer):
 
     # Force the step to be due now.
     from datetime import datetime, timedelta
-    from outreach_os.domain.models.sequence_step import SequenceStep
-    async with factory() as session:
-        async with session.begin():
-            await set_tenant_for_session(session, a["tenant_id"])
-            step = (await session.execute(
-                select_sequence_step_for_run(run_id)
-            )).scalar_one()
-            step.scheduled_at = datetime.utcnow() - timedelta(seconds=5)
+
+    async with factory() as session, session.begin():
+        await set_tenant_for_session(session, a["tenant_id"])
+        step = (await session.execute(
+            select_sequence_step_for_run(run_id)
+        )).scalar_one()
+        step.scheduled_at = datetime.utcnow() - timedelta(seconds=5)
 
     # Run the send engine.
-    async with factory() as session:
-        async with session.begin():
-            await set_tenant_for_session(session, a["tenant_id"])
-            svc = SendService(session, mailer=_fake_llm_and_mailer["stub"])
-            sends = await svc.execute_due(tenant_id=a["tenant_id"])
+    async with factory() as session, session.begin():
+        await set_tenant_for_session(session, a["tenant_id"])
+        svc = SendService(session, mailer=fake_llm_and_mailer["stub"])
+        sends = await svc.execute_due(tenant_id=a["tenant_id"])
     assert len(sends) == 1
     assert sends[0].status == "sent"
     assert sends[0].to_email == "target@x.example"
-    assert _fake_llm_and_mailer["stub"].sent[0].subject.startswith("Quick")
+    assert fake_llm_and_mailer["stub"].sent[0].subject.startswith("Quick")
 
     # The step is now 'sent'.
-    async with factory() as session:
-        async with session.begin():
-            await set_tenant_for_session(session, a["tenant_id"])
-            step = (await session.execute(
-                select_sequence_step_for_run(run_id)
-            )).scalar_one()
-            assert step.status == "sent"
-            assert step.sent_at is not None
+    async with factory() as session, session.begin():
+        await set_tenant_for_session(session, a["tenant_id"])
+        step = (await session.execute(
+            select_sequence_step_for_run(run_id)
+        )).scalar_one()
+        assert step.status == "sent"
+        assert step.sent_at is not None
 
 
 # --- Daily cap ---
 
-async def test_send_engine_honours_daily_cap(client, _fake_llm_and_mailer):
+async def test_send_engine_honours_daily_cap(client, fake_llm_and_mailer):
     a = await signup(client, email="a-cap@acme-customer.example", password="pw-12345-AbCde", tenant_name="A-cap")
     from outreach_os.domain.models.campaign import Campaign
     from outreach_os.domain.models.campaign_step import CampaignStep
-    from outreach_os.domain.models.mailbox import Mailbox
     from outreach_os.domain.models.lead import Lead
+    from outreach_os.domain.models.mailbox import Mailbox
     factory = get_session_factory()
-    async with factory() as session:
-        async with session.begin():
-            await set_tenant_for_session(session, a["tenant_id"])
-            camp = Campaign(
-                tenant_id=a["tenant_id"], name="cap-camp",
-                style_sample_emails=["Hi {first_name}, this is a test."],
-            )
-            session.add(camp)
-            await session.flush()
-            cs = CampaignStep(
-                tenant_id=a["tenant_id"], campaign_id=camp.id,
-                step_number=1, delay_days=0, subject_template="Hi",
-            )
-            session.add(cs)
-            mb = Mailbox(tenant_id=a["tenant_id"], provider="gmail", email_address="m@x.example", daily_send_cap=1)
-            session.add(mb)
-            leads = [
-                Lead(tenant_id=a["tenant_id"], source="serper", email=f"l{i}@x.example", first_name=f"L{i}")
-                for i in range(3)
-            ]
-            session.add_all(leads)
-            await session.flush()
-            camp_id, lead_ids = camp.id, [str(l.id) for l in leads]
+    async with factory() as session, session.begin():
+        await set_tenant_for_session(session, a["tenant_id"])
+        camp = Campaign(
+            tenant_id=a["tenant_id"], name="cap-camp",
+            style_sample_emails=["Hi {first_name}, this is a test."],
+        )
+        session.add(camp)
+        await session.flush()
+        cs = CampaignStep(
+            tenant_id=a["tenant_id"], campaign_id=camp.id,
+            step_number=1, delay_days=0, subject_template="Hi",
+        )
+        session.add(cs)
+        mb = Mailbox(tenant_id=a["tenant_id"], provider="gmail", email_address="m@x.example", daily_send_cap=1)
+        session.add(mb)
+        leads = [
+            Lead(tenant_id=a["tenant_id"], source="serper", email=f"l{i}@x.example", first_name=f"L{i}")
+            for i in range(3)
+        ]
+        session.add_all(leads)
+        await session.flush()
+        camp_id, lead_ids = camp.id, [str(lead.id) for lead in leads]
 
     r = await client.post(
         "/v1/sequences", headers=bearer(a["access_token"]),
@@ -287,82 +278,86 @@ async def test_send_engine_honours_daily_cap(client, _fake_llm_and_mailer):
 
     # Make all steps due.
     from datetime import datetime, timedelta
-    from outreach_os.domain.models.sequence_step import SequenceStep
-    async with factory() as session:
-        async with session.begin():
-            await set_tenant_for_session(session, a["tenant_id"])
-            steps = (await session.execute(
-                select_sequence_step_for_run(run_id)
-            )).scalars().all()
-            for s in steps:
-                s.scheduled_at = datetime.utcnow() - timedelta(seconds=5)
+
+    async with factory() as session, session.begin():
+        await set_tenant_for_session(session, a["tenant_id"])
+        steps = (await session.execute(
+            select_sequence_step_for_run(run_id)
+        )).scalars().all()
+        for s in steps:
+            s.scheduled_at = datetime.utcnow() - timedelta(seconds=5)
 
     # Run a single pass: only 1 should fire (cap=1).
-    async with factory() as session:
-        async with session.begin():
-            await set_tenant_for_session(session, a["tenant_id"])
-            svc = SendService(session, mailer=_fake_llm_and_mailer["stub"])
-            sends = await svc.execute_due(tenant_id=a["tenant_id"], limit=10)
+    async with factory() as session, session.begin():
+        await set_tenant_for_session(session, a["tenant_id"])
+        svc = SendService(session, mailer=fake_llm_and_mailer["stub"])
+        sends = await svc.execute_due(tenant_id=a["tenant_id"], limit=10)
     assert len(sends) == 1
     assert sends[0].status == "sent"
     # The other 2 are still pending.
-    async with factory() as session:
-        async with session.begin():
-            await set_tenant_for_session(session, a["tenant_id"])
-            steps = (await session.execute(
-                select_sequence_step_for_run(run_id)
-            )).scalars().all()
-            sent = sum(1 for s in steps if s.status == "sent")
-            pending = sum(1 for s in steps if s.status in ("pending", "queued"))
-            assert sent == 1
-            assert pending == 2
+    async with factory() as session, session.begin():
+        await set_tenant_for_session(session, a["tenant_id"])
+        steps = (await session.execute(
+            select_sequence_step_for_run(run_id)
+        )).scalars().all()
+        sent = sum(1 for s in steps if s.status == "sent")
+        pending = sum(1 for s in steps if s.status in ("pending", "queued"))
+        assert sent == 1
+        assert pending == 2
 
 
 # --- Tracking: open + click ---
 
-async def test_tracking_endpoints_record_events(client, _fake_llm_and_mailer):
+async def test_tracking_endpoints_record_events(client):
     a = await signup(client, email="a-trk@acme-customer.example", password="pw-12345-AbCde", tenant_name="A-trk")
     # Build a send row directly.
+    from email.utils import make_msgid
+
     from outreach_os.domain.models.campaign import Campaign
     from outreach_os.domain.models.campaign_step import CampaignStep
+    from outreach_os.domain.models.draft import Draft
     from outreach_os.domain.models.lead import Lead
     from outreach_os.domain.models.mailbox import Mailbox
+    from outreach_os.domain.models.send import Send
     from outreach_os.domain.models.sequence_run import SequenceRun
     from outreach_os.domain.models.sequence_step import SequenceStep
-    from outreach_os.domain.models.draft import Draft
-    from outreach_os.domain.models.send import Send
-    from email.utils import make_msgid
     factory = get_session_factory()
-    async with factory() as session:
-        async with session.begin():
-            await set_tenant_for_session(session, a["tenant_id"])
-            camp = Campaign(tenant_id=a["tenant_id"], name="trk-camp", style_sample_emails=[])
-            session.add(camp); await session.flush()
-            cs = CampaignStep(tenant_id=a["tenant_id"], campaign_id=camp.id, step_number=1, delay_days=0, subject_template="Hi")
-            session.add(cs); await session.flush()
-            mb = Mailbox(tenant_id=a["tenant_id"], provider="gmail", email_address="m@x.example")
-            session.add(mb)
-            lead = Lead(tenant_id=a["tenant_id"], source="serper", email="t@x.example", first_name="T")
-            session.add(lead); await session.flush()
-            run = SequenceRun(tenant_id=a["tenant_id"], campaign_id=camp.id, name="trk-run")
-            session.add(run); await session.flush()
-            step = SequenceStep(
-                tenant_id=a["tenant_id"], run_id=run.id, lead_id=lead.id,
-                campaign_step_id=cs.id, status="sent",
-                scheduled_at=datetime_utc(), sent_at=datetime_utc(),
-            )
-            session.add(step); await session.flush()
-            draft = Draft(tenant_id=a["tenant_id"], campaign_id=camp.id, lead_id=lead.id, step_id=cs.id,
-                          status="ready", subject="Hi", body_preview="hi there", model_used="stub")
-            session.add(draft); await session.flush()
-            send = Send(
-                tenant_id=a["tenant_id"], step_id=step.id, mailbox_id=mb.id, draft_id=draft.id,
-                to_email="t@x.example", from_email="m@x.example",
-                subject="Hi", body_text="hi there", message_id_header=make_msgid(domain="x.example"),
-                status="sent", sent_at=datetime_utc(),
-            )
-            session.add(send); await session.flush()
-            send_id = str(send.id)
+    async with factory() as session, session.begin():
+        await set_tenant_for_session(session, a["tenant_id"])
+        camp = Campaign(tenant_id=a["tenant_id"], name="trk-camp", style_sample_emails=[])
+        session.add(camp)
+        await session.flush()
+        cs = CampaignStep(tenant_id=a["tenant_id"], campaign_id=camp.id, step_number=1, delay_days=0, subject_template="Hi")
+        session.add(cs)
+        await session.flush()
+        mb = Mailbox(tenant_id=a["tenant_id"], provider="gmail", email_address="m@x.example")
+        session.add(mb)
+        lead = Lead(tenant_id=a["tenant_id"], source="serper", email="t@x.example", first_name="T")
+        session.add(lead)
+        await session.flush()
+        run = SequenceRun(tenant_id=a["tenant_id"], campaign_id=camp.id, name="trk-run")
+        session.add(run)
+        await session.flush()
+        step = SequenceStep(
+            tenant_id=a["tenant_id"], run_id=run.id, lead_id=lead.id,
+            campaign_step_id=cs.id, status="sent",
+            scheduled_at=datetime_utc(), sent_at=datetime_utc(),
+        )
+        session.add(step)
+        await session.flush()
+        draft = Draft(tenant_id=a["tenant_id"], campaign_id=camp.id, lead_id=lead.id, step_id=cs.id,
+                      status="ready", subject="Hi", body_preview="hi there", model_used="stub")
+        session.add(draft)
+        await session.flush()
+        send = Send(
+            tenant_id=a["tenant_id"], step_id=step.id, mailbox_id=mb.id, draft_id=draft.id,
+            to_email="t@x.example", from_email="m@x.example",
+            subject="Hi", body_text="hi there", message_id_header=make_msgid(domain="x.example"),
+            status="sent", sent_at=datetime_utc(),
+        )
+        session.add(send)
+        await session.flush()
+        send_id = str(send.id)
 
     # Hit the open pixel.
     r = await client.get(f"/t/open/{send_id}.png")
@@ -373,14 +368,13 @@ async def test_tracking_endpoints_record_events(client, _fake_llm_and_mailer):
     assert r.status_code == 302
     assert r.headers["location"] == "https://example.com/path"
     # The send's opened_at / clicked_at are set.
-    async with factory() as session:
-        async with session.begin():
-            await set_tenant_for_session(session, a["tenant_id"])
-            s = (await session.execute(
-                __import__("sqlalchemy").select(Send).where(Send.id == send_id)
-            )).scalar_one()
-            assert s.opened_at is not None
-            assert s.clicked_at is not None
+    async with factory() as session, session.begin():
+        await set_tenant_for_session(session, a["tenant_id"])
+        s = (await session.execute(
+            __import__("sqlalchemy").select(Send).where(Send.id == send_id)
+        )).scalar_one()
+        assert s.opened_at is not None
+        assert s.clicked_at is not None
 
 
 # --- Unsubscribe endpoint ---
@@ -399,7 +393,7 @@ async def test_unsubscribe_endpoint_adds_suppression(client):
 
 # --- helpers ---
 
-from sqlalchemy import select as _select
+
 def select_sequence_step_for_run(run_id):
     from outreach_os.domain.models.sequence_step import SequenceStep
     return _select(SequenceStep).where(SequenceStep.run_id == run_id)

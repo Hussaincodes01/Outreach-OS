@@ -7,9 +7,10 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from outreach_os.api.deps import AuthContext, get_current_user, get_scoped_db
+from outreach_os.domain.models.sequence_run import SequenceRun
 from outreach_os.domain.schemas.phase4 import (
-    SequenceRunStartIn,
     SequenceRunOut,
+    SequenceRunStartIn,
 )
 from outreach_os.services.sequence_service import SequenceError, SequenceService
 
@@ -17,7 +18,7 @@ router = APIRouter(prefix="/sequences", tags=["sequences"])
 
 
 def _to_out(
-    run, stats: dict[str, int]
+    run: SequenceRun, stats: dict[str, int]
 ) -> SequenceRunOut:
     return SequenceRunOut(
         id=run.id,

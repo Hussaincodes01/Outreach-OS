@@ -19,7 +19,7 @@ import uuid
 from datetime import datetime, timezone
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, HTTPException, Query, WebSocket, WebSocketDisconnect, status
+from fastapi import APIRouter, Depends, Query, WebSocket, WebSocketDisconnect, status
 from sqlalchemy import func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -181,7 +181,7 @@ async def notifications_ws(
             await websocket.receive_text()
     except WebSocketDisconnect:
         pass
-    except Exception as e:  # noqa: BLE001
+    except Exception as e:
         logger.warning("ws: unexpected error: %s", e)
     finally:
         await manager.disconnect(tenant_id, websocket)

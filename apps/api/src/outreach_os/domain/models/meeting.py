@@ -22,14 +22,21 @@ from __future__ import annotations
 
 import uuid
 from datetime import datetime
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from sqlalchemy import CheckConstraint, ForeignKey, Index, Integer, Text
-from sqlalchemy.dialects.postgresql import CITEXT, JSONB, UUID as PG_UUID
+from sqlalchemy.dialects.postgresql import CITEXT, JSONB
+from sqlalchemy.dialects.postgresql import UUID as PG_UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from sqlalchemy.sql.sqltypes import TIMESTAMP
 
 from outreach_os.core.db import Base
+
+if TYPE_CHECKING:
+    from outreach_os.domain.models.crm_sync_event import CrmSyncEvent
+    from outreach_os.domain.models.lead import Lead
+    from outreach_os.domain.models.mailbox import Mailbox
+
 
 
 class Meeting(Base):
@@ -96,9 +103,9 @@ class Meeting(Base):
         TIMESTAMP(timezone=True), nullable=False, server_default="now()"
     )
 
-    lead: Mapped["Lead"] = relationship("Lead")  # noqa: F821
-    mailbox: Mapped["Mailbox | None"] = relationship("Mailbox")  # noqa: F821
-    sync_events: Mapped[list["CrmSyncEvent"]] = relationship(  # noqa: F821
+    lead: Mapped[Lead] = relationship("Lead")
+    mailbox: Mapped[Mailbox | None] = relationship("Mailbox")
+    sync_events: Mapped[list[CrmSyncEvent]] = relationship(
         "CrmSyncEvent",
         back_populates="meeting",
         cascade="all, delete-orphan",
