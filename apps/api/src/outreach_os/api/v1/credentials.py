@@ -22,6 +22,7 @@ from outreach_os.services import vault_service
 from outreach_os.services.llm_credentials import (
     PROVIDERS,
     VALID_CREDENTIAL_KINDS,
+    spec_for_kind,
     verify_credentials,
 )
 
@@ -67,10 +68,23 @@ async def create_credential(
                 f"expected one of: {', '.join(sorted(VALID_CREDENTIAL_KINDS))}"
             ),
         )
-    if not any(payload.secret_payload.get(k) for k in ("api_key", "key", "token")):
+    spec = spec_for_kind(payload.kind)
+    has_key = any(payload.secret_payload.get(k) for k in ("api_key", "key", "token"))
+    # Self-hosted providers (Ollama) authenticate by network reachability, not
+    # a key, so requiring one would make them impossible to connect.
+    needs_key = spec.requires_api_key if spec else True
+    if needs_key and not has_key:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             detail="secret_payload must contain a non-empty 'api_key'",
+        )
+    if spec and spec.requires_api_base and not payload.secret_payload.get("api_base"):
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=(
+                f"{spec.label} needs an 'api_base' URL in secret_payload"
+                f"{f' (e.g. {spec.api_base_hint})' if spec.api_base_hint else ''}"
+            ),
         )
     try:
         ciphertext = vault_service.encrypt_for_tenant(
@@ -157,9 +171,7 @@ async def test_credential(
     except VaultError as exc:
         return CredentialTestResult(ok=False, message=str(exc))
 
-    spec = next(
-        (p for p in PROVIDERS if p.credential_kind == cred.kind), None
-    )
+    spec = spec_for_kind(cred.kind)
     if spec is None:
         # Non-LLM integration (Serper, Proxycurl, ...): no cheap universal
         # probe, so decryption is the strongest claim we can honestly make.
@@ -201,6 +213,11 @@ async def list_providers(
                 if p.credential_kind in by_kind
                 else None
             ),
+            description=p.description,
+            requires_api_base=p.requires_api_base,
+            requires_api_key=p.requires_api_key,
+            api_base_hint=p.api_base_hint,
+            model_count=len(p.models),
         )
         for p in PROVIDERS
     ]

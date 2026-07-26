@@ -30,7 +30,8 @@ from outreach_os.domain.models.knowledge_base_chunk import (
     KnowledgeBaseChunk,
 )
 from outreach_os.domain.models.knowledge_base_item import KnowledgeBaseItem
-from outreach_os.services.llm_credentials import client_for
+from outreach_os.domain.models.tenant import Tenant
+from outreach_os.services.llm_credentials import client_for, embedding_spec
 
 # --- Tokenizer --------------------------------------------------------------
 
@@ -94,13 +95,35 @@ class RAGService:
         self.llm = llm
         self.settings = get_settings()
 
-    async def _embedder(self, tenant_id: uuid.UUID) -> LLMClient:
+    async def _embedding_model(self, tenant_id: uuid.UUID) -> str:
+        """The workspace's embedding model, else the server default.
+
+        Kept separate from the chat model: most providers have no embeddings
+        API, so an Anthropic- or Ollama-based workspace still needs to point
+        the knowledge base somewhere that does.
+        """
+        tenant = await self.session.get(Tenant, tenant_id)
+        return (
+            tenant.embedding_llm_model if tenant and tenant.embedding_llm_model else None
+        ) or self.settings.llm_embedding_model
+
+    async def _embedder(
+        self, tenant_id: uuid.UUID, model: str
+    ) -> LLMClient:
         return await client_for(
-            self.session,
-            tenant_id=tenant_id,
-            model=self.settings.llm_embedding_model,
-            injected=self.llm,
+            self.session, tenant_id=tenant_id, model=model, injected=self.llm
         )
+
+    def _embed_kwargs(self, model: str) -> dict[str, int]:
+        """`dimensions` lets OpenAI v3 models project down to our column width.
+
+        Without it, text-embedding-3-large returns 3072 floats and every insert
+        would fail against `Vector(1536)`.
+        """
+        spec = embedding_spec(model)
+        if spec and spec.supports_dimension_override:
+            return {"dimensions": EMBEDDING_DIM}
+        return {}
 
     # --- Writes ---
 
@@ -121,8 +144,9 @@ class RAGService:
             overlap_tokens=self.settings.rag_chunk_overlap_tokens,
         )
         if chunks:
-            embedder = await self._embedder(tenant_id)
-            embeddings = embedder.embed(self.settings.llm_embedding_model, chunks)
+            model = await self._embedding_model(tenant_id)
+            embedder = await self._embedder(tenant_id, model)
+            embeddings = embedder.embed(model, chunks, **self._embed_kwargs(model))
             for idx, (text_chunk, vec) in enumerate(zip(chunks, embeddings, strict=True)):
                 if len(vec) != EMBEDDING_DIM:
                     raise ValueError(
@@ -222,8 +246,9 @@ class RAGService:
         if not query.strip():
             return []
 
-        embedder = await self._embedder(tenant_id)
-        query_vec = embedder.embed(self.settings.llm_embedding_model, [query])[0]
+        model = await self._embedding_model(tenant_id)
+        embedder = await self._embedder(tenant_id, model)
+        query_vec = embedder.embed(model, [query], **self._embed_kwargs(model))[0]
         if len(query_vec) != EMBEDDING_DIM:
             raise ValueError(
                 f"query embedding dim mismatch: {len(query_vec)} vs {EMBEDDING_DIM}"

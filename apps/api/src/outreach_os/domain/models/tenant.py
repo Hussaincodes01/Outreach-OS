@@ -47,6 +47,10 @@ class Tenant(Base):
     # string. NULL means "use the server default". The provider prefix decides
     # which of the tenant's own API keys gets used.
     default_llm_model: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # Embedding model for the knowledge base. Separate from the chat model
+    # because most providers have no embeddings API — an Anthropic-only
+    # workspace still needs somewhere to send embedding calls.
+    embedding_llm_model: Mapped[str | None] = mapped_column(Text, nullable=True)
     # Self-serve onboarding progress, e.g. {"llm_connected": true, ...}.
     # Free-form so adding a step doesn't need a migration.
     onboarding_state: Mapped[dict[str, Any]] = mapped_column(

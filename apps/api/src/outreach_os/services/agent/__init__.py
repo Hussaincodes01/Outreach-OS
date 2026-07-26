@@ -37,7 +37,7 @@ from outreach_os.domain.models.tenant import Tenant
 from outreach_os.services.agent.research_agent import run_research_agent
 from outreach_os.services.agent.tools import ToolContext
 from outreach_os.services.credential_lookup import get_credential_secrets
-from outreach_os.services.llm_credentials import client_for
+from outreach_os.services.llm_credentials import client_for, supports_tools
 from outreach_os.services.rag_service import RAGService, RetrievedChunk, format_chunks_for_prompt
 from outreach_os.services.scraping.live_research import scrape_live_context
 
@@ -280,7 +280,10 @@ async def _node_research(
     # or unproductive — a draft is always produced.
     research_brief = ""
     research_trace: dict[str, Any] = {}
-    if settings.agent_tools_enabled:
+    # Some models (Perplexity's Sonar, DeepSeek Reasoner) have no function
+    # calling. Skipping the loop for those is cheaper and clearer than firing a
+    # request we know will fail and relying on the error path.
+    if settings.agent_tools_enabled and supports_tools(state.model):
         research_brief, research_trace = await _run_tool_research(
             session=session,
             llm=llm,
@@ -289,6 +292,9 @@ async def _node_research(
             campaign=campaign,
             step=step,
         )
+
+    elif settings.agent_tools_enabled:
+        research_trace = {"skipped": "model_does_not_support_tools"}
 
     live_ctx = research_brief
     if not live_ctx:

@@ -55,6 +55,7 @@ export default function IntegrationsPage() {
   const [dialogKind, setDialogKind] = useState<string | null>(null);
   const [dialogLabel, setDialogLabel] = useState("");
   const [apiKey, setApiKey] = useState("");
+  const [apiBase, setApiBase] = useState("");
 
   const providers = useQuery({
     queryKey: ["providers"],
@@ -71,18 +72,25 @@ export default function IntegrationsPage() {
     queryClient.invalidateQueries({ queryKey: ["onboarding"] });
   };
 
+  const activeProvider = providers.data?.find((p) => p.credential_kind === dialogKind);
+
   const create = useMutation({
-    mutationFn: () =>
-      api.createCredential({
+    mutationFn: () => {
+      const payload: Record<string, string> = {};
+      if (apiKey.trim()) payload.api_key = apiKey.trim();
+      if (apiBase.trim()) payload.api_base = apiBase.trim();
+      return api.createCredential({
         kind: dialogKind!,
         label: dialogLabel.trim() || dialogKind!,
-        secret_payload: { api_key: apiKey.trim() },
-      }),
+        secret_payload: payload,
+      });
+    },
     onSuccess: () => {
-      toast.success("Key saved and encrypted");
+      toast.success("Saved and encrypted");
       setDialogKind(null);
       setDialogLabel("");
       setApiKey("");
+      setApiBase("");
       invalidate();
     },
     onError: (e: Error) => toast.error(e.message),
@@ -111,6 +119,9 @@ export default function IntegrationsPage() {
     setDialogKind(kind);
     setDialogLabel(label);
     setApiKey("");
+    setApiBase(
+      providers.data?.find((p) => p.credential_kind === kind)?.api_base_hint ?? ""
+    );
   };
 
   return (
@@ -281,17 +292,33 @@ export default function IntegrationsPage() {
                 placeholder="e.g. Production key"
               />
             </div>
-            <div className="space-y-1">
-              <Label htmlFor="cred-key">API key</Label>
-              <Input
-                id="cred-key"
-                type="password"
-                autoComplete="off"
-                value={apiKey}
-                onChange={(e) => setApiKey(e.target.value)}
-                placeholder="sk-…"
-              />
-            </div>
+            {activeProvider?.requires_api_base && (
+              <div className="space-y-1">
+                <Label htmlFor="cred-base">Server URL</Label>
+                <Input
+                  id="cred-base"
+                  value={apiBase}
+                  onChange={(e) => setApiBase(e.target.value)}
+                  placeholder={activeProvider.api_base_hint ?? "https://…"}
+                />
+                <p className="text-xs text-muted-foreground">
+                  Must be reachable from the server running Outreach OS.
+                </p>
+              </div>
+            )}
+            {activeProvider?.requires_api_key !== false && (
+              <div className="space-y-1">
+                <Label htmlFor="cred-key">API key</Label>
+                <Input
+                  id="cred-key"
+                  type="password"
+                  autoComplete="off"
+                  value={apiKey}
+                  onChange={(e) => setApiKey(e.target.value)}
+                  placeholder="sk-…"
+                />
+              </div>
+            )}
           </div>
           <DialogFooter>
             <Button variant="outline" onClick={() => setDialogKind(null)}>
@@ -299,9 +326,13 @@ export default function IntegrationsPage() {
             </Button>
             <Button
               onClick={() => create.mutate()}
-              disabled={!apiKey.trim() || create.isPending}
+              disabled={
+                create.isPending ||
+                (activeProvider?.requires_api_key !== false && !apiKey.trim()) ||
+                (activeProvider?.requires_api_base === true && !apiBase.trim())
+              }
             >
-              {create.isPending ? "Saving…" : "Save key"}
+              {create.isPending ? "Saving…" : "Save"}
             </Button>
           </DialogFooter>
         </DialogContent>
@@ -318,29 +349,45 @@ function ProviderRow({
   onConnect: (kind: string, label: string) => void;
 }) {
   return (
-    <div className="flex items-center justify-between rounded-md border px-3 py-2">
-      <div className="flex items-center gap-2">
-        <span className="text-sm font-medium">{provider.label}</span>
-        {provider.connected ? (
-          <Badge variant={provider.last_verified_at ? "default" : "secondary"} className="gap-1">
-            <CheckCircle2 className="h-3 w-3" aria-hidden="true" />
-            {provider.last_verified_at ? "Verified" : "Connected"}
-          </Badge>
-        ) : null}
-        {provider.supports_embeddings && (
-          <Badge variant="outline" className="text-xs">
-            supports embeddings
-          </Badge>
+    <div className="flex items-start justify-between gap-4 rounded-md border px-3 py-2">
+      <div className="min-w-0 space-y-1">
+        <div className="flex flex-wrap items-center gap-2">
+          <span className="text-sm font-medium">{provider.label}</span>
+          {provider.connected ? (
+            <Badge
+              variant={provider.last_verified_at ? "default" : "secondary"}
+              className="gap-1"
+            >
+              <CheckCircle2 className="h-3 w-3" aria-hidden="true" />
+              {provider.last_verified_at ? "Verified" : "Connected"}
+            </Badge>
+          ) : null}
+          {provider.supports_embeddings && (
+            <Badge variant="outline" className="text-xs">
+              embeddings
+            </Badge>
+          )}
+          {provider.requires_api_key === false && (
+            <Badge variant="outline" className="text-xs">
+              no key needed
+            </Badge>
+          )}
+          <span className="text-xs text-muted-foreground">
+            {provider.model_count} models
+          </span>
+        </div>
+        {provider.description && (
+          <p className="text-xs text-muted-foreground">{provider.description}</p>
         )}
       </div>
-      <div className="flex items-center gap-2">
+      <div className="flex shrink-0 items-center gap-2">
         <a
           href={provider.console_url}
           target="_blank"
           rel="noreferrer"
           className="flex items-center gap-1 text-xs text-muted-foreground underline"
         >
-          Get a key
+          {provider.requires_api_key === false ? "Docs" : "Get a key"}
           <ExternalLink className="h-3 w-3" aria-hidden="true" />
         </a>
         <Button

@@ -107,6 +107,7 @@ class LLMClient(Protocol):
         inputs: list[str],
         *,
         timeout: int | None = None,
+        dimensions: int | None = None,
     ) -> list[list[float]]: ...
 
 
@@ -212,6 +213,7 @@ class LiteLLMClient:
         inputs: list[str],
         *,
         timeout: int | None = None,
+        dimensions: int | None = None,
     ) -> list[list[float]]:
         if not inputs:
             return []
@@ -222,6 +224,10 @@ class LiteLLMClient:
         }
         if timeout is not None:
             kwargs["timeout"] = timeout
+        if dimensions is not None:
+            # OpenAI v3 embeddings can project to a smaller width, which is how
+            # text-embedding-3-large fits our fixed-width vector column.
+            kwargs["dimensions"] = dimensions
         try:
             resp = litellm.embedding(**kwargs)
         except Exception as exc:

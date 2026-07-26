@@ -73,8 +73,12 @@ def test_bare_model_name_is_rejected() -> None:
 
 
 def test_unsupported_provider_is_rejected() -> None:
+    """Providers we have no credential kind for cannot be routed to — we would
+    have nowhere to look up a key."""
     with pytest.raises(UnknownProviderError, match="unsupported provider"):
-        provider_for_model("cohere/command-r")
+        provider_for_model("bedrock/anthropic.claude-v2")
+    with pytest.raises(UnknownProviderError, match="unsupported provider"):
+        provider_for_model("notaprovider/some-model")
 
 
 # --- resolution -------------------------------------------------------------

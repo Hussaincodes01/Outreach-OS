@@ -37,6 +37,12 @@ class ProviderOut(ApiModel):
     connected: bool
     # Populated only after a successful "Test" — we never probe on list.
     last_verified_at: datetime | None = None
+    description: str = ""
+    # Self-hosted / gateway providers take a base URL; some take no key at all.
+    requires_api_base: bool = False
+    requires_api_key: bool = True
+    api_base_hint: str | None = None
+    model_count: int = 0
 
 
 class CredentialOut(ApiModel):

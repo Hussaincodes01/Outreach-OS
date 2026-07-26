@@ -68,6 +68,12 @@ export interface ProviderOut {
   supports_embeddings: boolean;
   connected: boolean;
   last_verified_at: string | null;
+  description: string;
+  /** Self-hosted / gateway providers take a base URL; some take no key. */
+  requires_api_base: boolean;
+  requires_api_key: boolean;
+  api_base_hint: string | null;
+  model_count: number;
 }
 
 export interface OnboardingStepOut {
@@ -89,9 +95,33 @@ export interface OnboardingStatusOut {
   steps: OnboardingStepOut[];
 }
 
+export interface ModelOut {
+  id: string;
+  label: string;
+  provider: string;
+  provider_label: string;
+  supports_tools: boolean;
+  context_window: number;
+  tier: string;
+  /** False when this workspace has no key for the model's provider. */
+  available: boolean;
+}
+
+export interface EmbeddingModelOut {
+  id: string;
+  label: string;
+  provider: string;
+  provider_label: string;
+  dimensions: number;
+  available: boolean;
+}
+
 export interface LlmSettingsOut {
   default_llm_model: string | null;
+  embedding_llm_model: string | null;
   available_models: string[];
+  models: ModelOut[];
+  embedding_models: EmbeddingModelOut[];
 }
 
 export interface MailboxOut {
@@ -826,10 +856,13 @@ export const api = {
   async getLlmSettings(): Promise<LlmSettingsOut> {
     return request<LlmSettingsOut>("/v1/onboarding/llm-settings");
   },
-  async updateLlmSettings(model: string | null): Promise<LlmSettingsOut> {
+  async updateLlmSettings(input: {
+    default_llm_model: string | null;
+    embedding_llm_model: string | null;
+  }): Promise<LlmSettingsOut> {
     return request<LlmSettingsOut>("/v1/onboarding/llm-settings", {
       method: "PUT",
-      body: JSON.stringify({ default_llm_model: model }),
+      body: JSON.stringify(input),
     });
   },
 
