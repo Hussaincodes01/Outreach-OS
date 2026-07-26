@@ -5,11 +5,12 @@ Reads from environment / .env. All settings are validated at import time.
 from __future__ import annotations
 
 import base64
+import json
 from functools import lru_cache
-from typing import Literal
+from typing import Annotated, Literal
 
 from pydantic import Field, SecretStr, field_validator, model_validator
-from pydantic_settings import BaseSettings, SettingsConfigDict
+from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 
 
 class Settings(BaseSettings):
@@ -43,7 +44,11 @@ class Settings(BaseSettings):
     # array. In development/test, localhost origins are added automatically.
     # REQUIRED in production/staging — without it the deployed web app cannot
     # make authenticated cross-origin requests to the API.
-    cors_allowed_origins: list[str] = Field(default_factory=list)
+    # `NoDecode` is essential, not cosmetic: without it pydantic-settings runs
+    # json.loads() on the raw env value inside EnvSettingsSource — BEFORE any
+    # field validator — so the documented comma-separated form raised
+    # SettingsError and the API could not boot in production at all.
+    cors_allowed_origins: Annotated[list[str], NoDecode] = Field(default_factory=list)
 
     # --- Redis / Celery ---
     redis_url: str = "redis://localhost:6379/0"
@@ -245,15 +250,26 @@ class Settings(BaseSettings):
     @field_validator("cors_allowed_origins", mode="before")
     @classmethod
     def _split_cors_origins(cls, value: object) -> object:
-        """Allow CORS origins as a comma-separated string in addition to a
-        JSON array (the latter is handled natively by pydantic-settings)."""
-        if isinstance(value, str):
-            stripped = value.strip()
-            if not stripped or stripped.startswith("["):
-                # Empty -> [], JSON array -> let pydantic parse it.
-                return stripped or []
-            return [origin.strip() for origin in stripped.split(",") if origin.strip()]
-        return value
+        """Accept a comma-separated string or a JSON array.
+
+        The field is marked `NoDecode`, so this validator owns BOTH forms —
+        pydantic-settings no longer pre-parses the value. Comma-separated is
+        what `.env.production.example` documents and what operators actually
+        write; the JSON array form is kept for backwards compatibility.
+        """
+        if not isinstance(value, str):
+            return value
+        stripped = value.strip()
+        if not stripped:
+            return []
+        if stripped.startswith("["):
+            try:
+                return json.loads(stripped)
+            except json.JSONDecodeError as exc:
+                raise ValueError(
+                    f"CORS_ALLOWED_ORIGINS looks like JSON but is not valid: {exc}"
+                ) from exc
+        return [origin.strip() for origin in stripped.split(",") if origin.strip()]
 
     @model_validator(mode="after")
     def _enforce_production_safety(self) -> Settings:
