@@ -28,3 +28,13 @@ class MailError(OutreachError):
 
 class ConflictError(OutreachError):
     pass
+
+
+class SetupRequiredError(OutreachError):
+    """The tenant must finish a configuration step before this can work.
+
+    Distinct from ValidationError: the request was well-formed, the workspace
+    just isn't set up yet (e.g. no BYOK LLM key connected). Mapped to 428 so
+    the web app can send the user to onboarding instead of showing a generic
+    failure.
+    """

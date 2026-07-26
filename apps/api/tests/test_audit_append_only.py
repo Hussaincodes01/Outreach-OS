@@ -74,15 +74,17 @@ async def test_hash_chain_links_within_tenant(client: AsyncClient) -> None:
         tenant_slug="chain",
     )
     for i in range(3):
-        await client.post(
+        resp = await client.post(
             "/v1/credentials",
             json={
-                "kind": "k",
+                "kind": "serper",
                 "label": f"cred-{i}",
-                "secret_payload": {"x": i},
+                "secret_payload": {"api_key": f"test-key-{i}"},
             },
             headers=bearer(pair["access_token"]),
         )
+        # Each create must actually land, otherwise there is no chain to walk.
+        assert resp.status_code == 201, resp.text
 
     async with session_scope() as session:
         await session.execute(

@@ -22,6 +22,23 @@ class CredentialCreate(ApiModel):
     )
 
 
+class ProviderOut(ApiModel):
+    """A connectable LLM provider, plus whether this tenant has wired it up.
+
+    Drives the integrations page and the onboarding checklist, so the UI never
+    hard-codes a provider list that can drift from the backend.
+    """
+
+    provider: str
+    credential_kind: str
+    label: str
+    console_url: str
+    supports_embeddings: bool
+    connected: bool
+    # Populated only after a successful "Test" — we never probe on list.
+    last_verified_at: datetime | None = None
+
+
 class CredentialOut(ApiModel):
     id: uuid.UUID
     kind: str
@@ -34,3 +51,6 @@ class CredentialOut(ApiModel):
 class CredentialTestResult(ApiModel):
     ok: bool
     message: str = ""
+    # True when the check actually reached the provider (rather than only
+    # confirming we could decrypt the stored blob).
+    verified_live: bool = False

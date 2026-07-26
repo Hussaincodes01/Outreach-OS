@@ -25,7 +25,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from outreach_os.core.config import get_settings
-from outreach_os.core.llm import LLMClient, get_llm_client
+from outreach_os.core.llm import LLMClient
 from outreach_os.core.s3 import (
     S3Error,
     build_draft_key,
@@ -42,6 +42,7 @@ from outreach_os.services.agent import (
     AgentInputError,
     run_agent,
 )
+from outreach_os.services.llm_credentials import MissingLLMCredentialsError
 
 log = logging.getLogger(__name__)
 
@@ -91,7 +92,9 @@ def draft_row_to_out(d: Draft) -> DraftOut:
 class DraftService:
     def __init__(self, session: AsyncSession, *, llm: LLMClient | None = None) -> None:
         self.session = session
-        self.llm = llm or get_llm_client()
+        # None in production: the agent resolves a client from the tenant's own
+        # key (BYOK). Tests inject a deterministic fake here.
+        self.llm = llm
         self.settings = get_settings()
 
     # --- Reads ---
@@ -276,6 +279,26 @@ class DraftService:
                 llm=self.llm,
             )
         except AgentInputError as exc:
+            run.status = "failed"
+            run.error = str(exc)[:500]
+            run.completed_at = __import__("datetime").datetime.utcnow()
+            draft.status = "failed"
+            draft.error = str(exc)[:500]
+            await self.session.flush()
+            return DraftGenerationResult(
+                draft_id=draft.id,
+                agent_run_id=run.id,
+                status="failed",
+                subject=None,
+                body_preview=None,
+                model_used=None,
+                error=run.error,
+            )
+        except MissingLLMCredentialsError as exc:
+            # Expected setup state, not a crash: the tenant hasn't connected a
+            # key yet. Surface the actionable message on the draft row and keep
+            # it out of the error logs.
+            log.info("draft skipped, no LLM key for tenant %s", tenant_id)
             run.status = "failed"
             run.error = str(exc)[:500]
             run.completed_at = __import__("datetime").datetime.utcnow()

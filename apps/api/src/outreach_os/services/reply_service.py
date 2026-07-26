@@ -22,12 +22,14 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from outreach_os.core.config import get_settings
-from outreach_os.core.llm import LLMClient, get_llm_client
+from outreach_os.core.errors import OutreachError
+from outreach_os.core.llm import LLMClient
 from outreach_os.domain.models.reply import Reply
 from outreach_os.domain.models.send import Send
 from outreach_os.domain.models.sequence_step import SequenceStep
 from outreach_os.domain.models.suppression import Suppression
 from outreach_os.domain.schemas.phase4 import ReplyIngestIn
+from outreach_os.services.llm_credentials import client_for
 
 log = logging.getLogger(__name__)
 
@@ -57,8 +59,14 @@ class ReplyService:
         self.llm = llm
         self.settings = get_settings()
 
-    def _get_llm(self) -> LLMClient:
-        return self.llm or get_llm_client()
+    async def _get_llm(self, tenant_id: uuid.UUID) -> LLMClient:
+        """Reply classification runs on the tenant's own key (BYOK)."""
+        return await client_for(
+            self.session,
+            tenant_id=tenant_id,
+            model=self.settings.llm_default_model,
+            injected=self.llm,
+        )
 
     async def ingest(
         self,
@@ -127,7 +135,13 @@ class ReplyService:
     async def _classify_and_act(
         self, *, tenant_id: uuid.UUID, reply: Reply, send: Send
     ) -> None:
-        llm = self._get_llm()
+        try:
+            llm = await self._get_llm(tenant_id)
+        except OutreachError as exc:
+            # No key connected — leave the reply un-classified rather than
+            # failing the whole inbound webhook.
+            log.warning("reply classification skipped: %s", exc)
+            return
         # Build the user prompt.
         prompt = (
             f"From: {reply.from_email} ({reply.from_name or 'unknown'})\n"

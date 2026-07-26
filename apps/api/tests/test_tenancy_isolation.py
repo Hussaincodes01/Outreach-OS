@@ -234,24 +234,26 @@ async def test_rls_blocks_injection_that_drops_where_clause(
         tenant_name="Inj2",
         tenant_slug="inj2",
     )
-    await client.post(
+    ra = await client.post(
         "/v1/credentials",
         json={
-            "kind": "k",
+            "kind": "serper",
             "label": "a",
-            "secret_payload": {"x": 1},
+            "secret_payload": {"api_key": "key-a"},
         },
         headers=bearer(a["access_token"]),
     )
-    await client.post(
+    assert ra.status_code == 201, ra.text
+    rb = await client.post(
         "/v1/credentials",
         json={
-            "kind": "k",
+            "kind": "serper",
             "label": "b",
-            "secret_payload": {"x": 1},
+            "secret_payload": {"api_key": "key-b"},
         },
         headers=bearer(b["access_token"]),
     )
+    assert rb.status_code == 201, rb.text
 
     async with session_scope() as session:
         await set_tenant_for_session(session, str(b["tenant_id"]))

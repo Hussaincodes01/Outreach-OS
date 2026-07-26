@@ -3,6 +3,7 @@
 import { useQuery } from "@tanstack/react-query";
 import { api } from "@/lib/api-client";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { SetupChecklist } from "@/components/onboarding/setup-checklist";
 
 export default function DashboardPage() {
   const tenantQuery = useQuery({
@@ -60,6 +61,9 @@ export default function DashboardPage() {
             : "Loading workspace…"}
         </p>
       </div>
+
+      {/* Hides itself once every required step is done. */}
+      <SetupChecklist />
 
       <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
         <Card>

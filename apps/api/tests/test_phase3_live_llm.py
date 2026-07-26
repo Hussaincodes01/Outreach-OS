@@ -1,34 +1,46 @@
-"""Phase 3 — live LLM smoke test.
+"""Phase 3 — live LLM smoke test, through the real BYOK path.
 
-Runs the full pipeline against the real LiteLLM client. Skipped if
-`OPENAI_API_KEY` is not set in the environment.
+Runs the full pipeline against a real provider using a key stored in the
+tenant's encrypted vault — exactly how production resolves credentials. It is
+therefore also the end-to-end proof that BYOK resolution works, not just that
+LiteLLM works.
 
-This is intentionally tiny — one happy-path generate — because real
-LLM tests are slow and cost tokens. The deterministic fake covers
-behavioural coverage; this one is a "does the wiring actually work
-end-to-end with a real provider" check.
+Skipped unless `OUTREACH_TEST_OPENAI_KEY` is set. That is a test-only variable:
+the application itself never reads provider keys from the environment.
+
+Intentionally tiny — one happy-path generate — because real LLM tests are slow
+and cost tokens. The deterministic fake carries the behavioural coverage.
 """
 from __future__ import annotations
 
+import os
 import uuid
 
 import pytest
 
 from outreach_os.core.config import get_settings
 from outreach_os.core.db import get_session_factory
-from outreach_os.core.llm import has_openai_key
+from outreach_os.core.llm import set_llm_client
 from outreach_os.core.s3 import reset_for_tests
 from outreach_os.core.tenancy import set_tenant_for_session
+from outreach_os.services.credential_lookup import create_credential
 from outreach_os.services.draft_service import DraftService
 from tests.fake_llm import FakeLLMClient  # noqa: F401  (sanity import)
 
 pytestmark = pytest.mark.live_llm
 
+_LIVE_KEY_ENV = "OUTREACH_TEST_OPENAI_KEY"
+
 
 @pytest.fixture(autouse=True)
 def _require_openai_key():
-    if not has_openai_key():
-        pytest.skip("OPENAI_API_KEY not set; skipping live LLM test")
+    if not os.environ.get(_LIVE_KEY_ENV):
+        pytest.skip(f"{_LIVE_KEY_ENV} not set; skipping live LLM test")
+    # The conftest autouse fake would otherwise short-circuit BYOK resolution;
+    # clear it so this test exercises the real credential path.
+    set_llm_client(None)
+    yield
+    set_llm_client(None)
 
 
 async def test_live_generate_one_draft():
@@ -87,11 +99,21 @@ async def test_live_generate_one_draft():
         )
         session.add(step)
         await session.flush()
+
+        # BYOK: store the provider key in the tenant's vault. This is the only
+        # way the pipeline can obtain credentials — nothing reads the env.
+        await create_credential(
+            session,
+            tenant_id=tenant_id,
+            kind="llm_openai",
+            plaintext={"api_key": os.environ[_LIVE_KEY_ENV]},
+            label="live test key",
+        )
         lead_id, campaign_id, step_id = lead.id, campaign.id, step.id
 
     async with factory() as session, session.begin():
         await set_tenant_for_session(session, str(tenant_id))
-        svc = DraftService(session)  # use real LLM (not the fake)
+        svc = DraftService(session)  # no injected client: resolve via BYOK
         try:
             result = await svc.generate_draft(
                 tenant_id=tenant_id,

@@ -145,6 +145,15 @@ class Settings(BaseSettings):
     rag_min_similarity: float = 0.65
     # Max seconds a single draft-generation run may take before timing out.
     agent_run_timeout: int = 180
+    # --- Tool-calling research agent ---
+    # Master switch. Off falls back to the deterministic research step.
+    agent_tools_enabled: bool = True
+    # Hard cap on tool-calling rounds per draft. Each round is a completion the
+    # tenant pays for on their own key, so this is a cost control, not a
+    # performance tweak.
+    agent_max_tool_steps: int = 6
+    # Cumulative token budget for the research loop (excludes the draft call).
+    agent_max_research_tokens: int = 12000
     # Default presigned-URL TTL (seconds) for draft S3 links.
     s3_presign_ttl: int = 900
     # Convenience bucket for drafts (separate from the general S3 bucket).

@@ -54,7 +54,44 @@ export interface CredentialOut {
   label: string;
   created_at: string;
   last_used_at: string | null;
+  last_verified_at?: string | null;
   has_secret: boolean;
+}
+
+/** A connectable LLM provider. Served by the API so the UI never hard-codes
+ *  a list that can drift from the backend. */
+export interface ProviderOut {
+  provider: string;
+  credential_kind: string;
+  label: string;
+  console_url: string;
+  supports_embeddings: boolean;
+  connected: boolean;
+  last_verified_at: string | null;
+}
+
+export interface OnboardingStepOut {
+  key: string;
+  title: string;
+  description: string;
+  done: boolean;
+  required: boolean;
+  href: string;
+  detail: string | null;
+}
+
+export interface OnboardingStatusOut {
+  /** True once every required step is done, i.e. the workspace can actually run. */
+  ready: boolean;
+  dismissed: boolean;
+  completed_at: string | null;
+  next_step_key: string | null;
+  steps: OnboardingStepOut[];
+}
+
+export interface LlmSettingsOut {
+  default_llm_model: string | null;
+  available_models: string[];
 }
 
 export interface MailboxOut {
@@ -662,6 +699,15 @@ class ApiError extends Error {
   }
 }
 
+/**
+ * 428 means the workspace is missing a setup step (e.g. no BYOK API key), not
+ * that the request was wrong. Callers use this to send the user to onboarding
+ * instead of showing a generic failure.
+ */
+export function isSetupRequired(err: unknown): err is ApiError {
+  return err instanceof ApiError && err.status === 428;
+}
+
 let inMemoryToken: string | null = null;
 
 function authHeader(): Record<string, string> {
@@ -754,11 +800,37 @@ export const api = {
   async deleteCredential(id: string): Promise<void> {
     return request<void>(`/v1/credentials/${id}`, { method: "DELETE" });
   },
-  async testCredential(id: string): Promise<{ ok: boolean; message: string }> {
-    return request<{ ok: boolean; message: string }>(
+  async testCredential(
+    id: string
+  ): Promise<{ ok: boolean; message: string; verified_live: boolean }> {
+    return request<{ ok: boolean; message: string; verified_live: boolean }>(
       `/v1/credentials/${id}/test`,
       { method: "POST" }
     );
+  },
+  /** The connectable providers, and whether this workspace has wired each up. */
+  async listProviders(): Promise<ProviderOut[]> {
+    return request<ProviderOut[]>("/v1/credentials/providers");
+  },
+
+  // -- onboarding --
+  async getOnboarding(): Promise<OnboardingStatusOut> {
+    return request<OnboardingStatusOut>("/v1/onboarding");
+  },
+  async dismissOnboarding(dismissed: boolean): Promise<OnboardingStatusOut> {
+    return request<OnboardingStatusOut>("/v1/onboarding/dismiss", {
+      method: "POST",
+      body: JSON.stringify({ dismissed }),
+    });
+  },
+  async getLlmSettings(): Promise<LlmSettingsOut> {
+    return request<LlmSettingsOut>("/v1/onboarding/llm-settings");
+  },
+  async updateLlmSettings(model: string | null): Promise<LlmSettingsOut> {
+    return request<LlmSettingsOut>("/v1/onboarding/llm-settings", {
+      method: "PUT",
+      body: JSON.stringify({ default_llm_model: model }),
+    });
   },
 
   // -- mailboxes --

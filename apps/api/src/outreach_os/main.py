@@ -27,6 +27,7 @@ from outreach_os.api.v1 import (
     meetings,
     notification_preferences,
     notifications,
+    onboarding,
     proxies,
     replies,
     scraping_jobs,
@@ -47,6 +48,7 @@ from outreach_os.core.errors import (
     NotFoundError,
     OAuthError,
     OutreachError,
+    SetupRequiredError,
     ValidationError,
 )
 from outreach_os.core.logging import configure_logging, get_logger
@@ -144,6 +146,9 @@ async def _handle_domain_error(request: Request, exc: OutreachError) -> JSONResp
         OAuthError: status.HTTP_503_SERVICE_UNAVAILABLE,
         MailError: status.HTTP_502_BAD_GATEWAY,
         ConflictError: status.HTTP_409_CONFLICT,
+        # 428: the request was fine, the workspace just isn't configured yet.
+        # The web app keys off this to route the user into onboarding.
+        SetupRequiredError: status.HTTP_428_PRECONDITION_REQUIRED,
     }
     code = status_map.get(type(exc), status.HTTP_400_BAD_REQUEST)
     return JSONResponse(status_code=code, content={"detail": str(exc)})
@@ -156,6 +161,7 @@ app.include_router(auth.router, prefix="/v1")
 app.include_router(tenants.router, prefix="/v1")
 app.include_router(users.router, prefix="/v1")
 app.include_router(credentials.router, prefix="/v1")
+app.include_router(onboarding.router, prefix="/v1")
 app.include_router(mailboxes.router, prefix="/v1")
 app.include_router(audit.router, prefix="/v1")
 app.include_router(icps.router, prefix="/v1")

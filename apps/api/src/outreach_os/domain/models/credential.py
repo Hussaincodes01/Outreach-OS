@@ -35,5 +35,11 @@ class Credential(Base):
     last_used_at: Mapped[datetime | None] = mapped_column(
         TIMESTAMP(timezone=True), nullable=True
     )
+    # Set when a live call to the provider succeeded with this key. Distinct
+    # from last_used_at: decrypting a blob proves nothing about whether the
+    # provider will accept it.
+    last_verified_at: Mapped[datetime | None] = mapped_column(
+        TIMESTAMP(timezone=True), nullable=True
+    )
 
     __table_args__ = (Index("ix_credential_tenant_kind", "tenant_id", "kind"),)

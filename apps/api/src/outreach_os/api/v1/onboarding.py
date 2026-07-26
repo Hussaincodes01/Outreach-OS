@@ -1,0 +1,145 @@
+"""Onboarding + workspace LLM settings.
+
+Two things a self-serve user needs that the rest of the API doesn't provide:
+a truthful "what's left to set up?" checklist, and a place to choose which
+model their own key should drive.
+"""
+from __future__ import annotations
+
+from fastapi import APIRouter, Depends, HTTPException, status
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from outreach_os.api.deps import AuthContext, get_current_user, get_scoped_db
+from outreach_os.core.audit import write_audit_event
+from outreach_os.domain.models.tenant import Tenant
+from outreach_os.domain.schemas.onboarding import (
+    LlmSettingsIn,
+    LlmSettingsOut,
+    OnboardingDismissIn,
+    OnboardingStatusOut,
+    OnboardingStepOut,
+)
+from outreach_os.services import onboarding_service
+from outreach_os.services.llm_credentials import (
+    PROVIDERS,
+    UnknownProviderError,
+    load_credentials,
+    provider_for_model,
+)
+
+router = APIRouter(prefix="/onboarding", tags=["onboarding"])
+
+
+@router.get("", response_model=OnboardingStatusOut)
+async def get_onboarding(
+    user: AuthContext = Depends(get_current_user),
+    db: AsyncSession = Depends(get_scoped_db),
+) -> OnboardingStatusOut:
+    """The setup checklist, derived from live state on every call."""
+    status_ = await onboarding_service.get_status(db, tenant_id=user.tenant_id)
+    if status_.ready:
+        await onboarding_service.mark_completed(db, tenant_id=user.tenant_id)
+    nxt = status_.next_step
+    return OnboardingStatusOut(
+        ready=status_.ready,
+        dismissed=status_.dismissed,
+        completed_at=status_.completed_at,
+        next_step_key=nxt.key if nxt else None,
+        steps=[
+            OnboardingStepOut(
+                key=s.key,
+                title=s.title,
+                description=s.description,
+                done=s.done,
+                required=s.required,
+                href=s.href,
+                detail=s.detail,
+            )
+            for s in status_.steps
+        ],
+    )
+
+
+@router.post("/dismiss", response_model=OnboardingStatusOut)
+async def dismiss_onboarding(
+    body: OnboardingDismissIn,
+    user: AuthContext = Depends(get_current_user),
+    db: AsyncSession = Depends(get_scoped_db),
+) -> OnboardingStatusOut:
+    await onboarding_service.set_dismissed(
+        db, tenant_id=user.tenant_id, dismissed=body.dismissed
+    )
+    return await get_onboarding(user=user, db=db)
+
+
+@router.get("/llm-settings", response_model=LlmSettingsOut)
+async def get_llm_settings(
+    user: AuthContext = Depends(get_current_user),
+    db: AsyncSession = Depends(get_scoped_db),
+) -> LlmSettingsOut:
+    tenant = await db.get(Tenant, user.tenant_id)
+    if tenant is None:
+        raise HTTPException(status_code=404, detail="tenant not found")
+    return LlmSettingsOut(
+        default_llm_model=tenant.default_llm_model,
+        available_models=[
+            m for p in PROVIDERS for m in (p.verify_model,)
+        ],
+    )
+
+
+@router.put("/llm-settings", response_model=LlmSettingsOut)
+async def update_llm_settings(
+    body: LlmSettingsIn,
+    user: AuthContext = Depends(get_current_user),
+    db: AsyncSession = Depends(get_scoped_db),
+) -> LlmSettingsOut:
+    """Choose the model this workspace drafts with.
+
+    Rejects a model whose provider the tenant has no key for — otherwise the
+    failure would surface much later, as a broken campaign.
+    """
+    if user.role not in {"owner", "admin"}:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN, detail="insufficient role"
+        )
+    tenant = await db.get(Tenant, user.tenant_id)
+    if tenant is None:
+        raise HTTPException(status_code=404, detail="tenant not found")
+
+    if body.default_llm_model is not None:
+        try:
+            provider = provider_for_model(body.default_llm_model)
+        except UnknownProviderError as exc:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)
+            ) from exc
+        creds = await load_credentials(
+            db, tenant_id=user.tenant_id, provider=provider
+        )
+        if creds is None:
+            raise HTTPException(
+                status_code=status.HTTP_428_PRECONDITION_REQUIRED,
+                detail=(
+                    f"Connect a {provider} API key before selecting {body.default_llm_model}."
+                ),
+            )
+
+    tenant.default_llm_model = body.default_llm_model
+    await db.flush()
+    await write_audit_event(
+        db,
+        action="tenant.llm_model_changed",
+        target_type="tenant",
+        target_id=user.tenant_id,
+        actor_kind="user",
+        actor_id=user.user_id,
+        payload={"default_llm_model": body.default_llm_model},
+    )
+    return LlmSettingsOut(
+        default_llm_model=tenant.default_llm_model,
+        available_models=[p.verify_model for p in PROVIDERS],
+    )
+
+
+__all__ = ["router"]

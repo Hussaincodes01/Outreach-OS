@@ -29,10 +29,15 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from outreach_os.core.config import get_settings
-from outreach_os.core.llm import LLMClient, LLMResponse, get_llm_client
+from outreach_os.core.llm import LLMClient, LLMResponse
 from outreach_os.domain.models.campaign import Campaign
 from outreach_os.domain.models.campaign_step import CampaignStep
 from outreach_os.domain.models.lead import Lead
+from outreach_os.domain.models.tenant import Tenant
+from outreach_os.services.agent.research_agent import run_research_agent
+from outreach_os.services.agent.tools import ToolContext
+from outreach_os.services.credential_lookup import get_credential_secrets
+from outreach_os.services.llm_credentials import client_for
 from outreach_os.services.rag_service import RAGService, RetrievedChunk, format_chunks_for_prompt
 from outreach_os.services.scraping.live_research import scrape_live_context
 
@@ -197,12 +202,64 @@ class AgentInputError(RuntimeError):
     """Raised when the inputs (lead/campaign/step) are missing or invalid."""
 
 
+async def _run_tool_research(
+    *,
+    session: AsyncSession,
+    llm: LLMClient,
+    state: AgentState,
+    lead: Lead,
+    campaign: Campaign,
+    step: CampaignStep,
+) -> tuple[str, dict[str, Any]]:
+    """Run the tool-calling researcher. Returns (brief, trace).
+
+    Returns an empty brief on any failure so the caller can fall back; research
+    is an enhancement, never a reason to fail a draft.
+    """
+    settings = get_settings()
+    try:
+        # Third-party keys are BYOK too — the web-search tool only appears if
+        # this tenant connected their own Serper key.
+        api_keys = await get_credential_secrets(
+            session, tenant_id=state.tenant_id, kinds=["serper"]
+        )
+        ctx = ToolContext(
+            session=session,
+            tenant_id=state.tenant_id,
+            lead_id=state.lead_id,
+            llm=llm,
+            api_keys=api_keys,
+        )
+        task = (
+            f"Lead: {lead.full_name or lead.first_name or 'unknown'}"
+            f" — {lead.title or 'unknown title'}"
+            f" at {lead.company_name or lead.domain or 'unknown company'}.\n"
+            f"Campaign: {campaign.name}. Goal of this email: {step.goal or 'open a conversation'}.\n"
+            f"This is step {step.step_number} of the sequence."
+        )
+        result = await run_research_agent(
+            llm=llm,
+            model=state.model,
+            ctx=ctx,
+            task_brief=task,
+            max_steps=settings.agent_max_tool_steps,
+            max_tokens=settings.agent_max_research_tokens,
+            timeout=settings.llm_request_timeout,
+        )
+    except Exception as exc:
+        log.warning("research agent failed, falling back: %s", exc)
+        return "", {"error": str(exc)[:200]}
+
+    return result.brief, result.to_trace()
+
+
 async def _node_research(
     state: AgentState,
     *,
     session: AsyncSession,
     llm: LLMClient,
 ) -> dict[str, Any]:
+    settings = get_settings()
     lead = await _load_lead(session, state.lead_id)
     campaign = await _load_campaign(session, state.campaign_id)
     step = await _load_step(session, state.step_id)
@@ -218,8 +275,25 @@ async def _node_research(
             # RAG failure must not abort the run; we just skip it.
             log.warning("rag search failed: %s", exc)
 
-    # Live research: scrape the lead's website for current context.
-    live_ctx = await asyncio.to_thread(scrape_live_context, lead.domain)
+    # Agentic research: let the model decide what to look up. Falls back to the
+    # deterministic homepage scrape when disabled, unsupported by the provider,
+    # or unproductive — a draft is always produced.
+    research_brief = ""
+    research_trace: dict[str, Any] = {}
+    if settings.agent_tools_enabled:
+        research_brief, research_trace = await _run_tool_research(
+            session=session,
+            llm=llm,
+            state=state,
+            lead=lead,
+            campaign=campaign,
+            step=step,
+        )
+
+    live_ctx = research_brief
+    if not live_ctx:
+        live_ctx = await asyncio.to_thread(scrape_live_context, lead.domain)
+        research_trace = {**research_trace, "fallback": "deterministic_scrape"}
 
     return {
         "lead": {
@@ -261,6 +335,7 @@ async def _node_research(
                 "query": query,
                 "rag_chunk_count": len(chunks),
                 "live_context_chars": len(live_ctx),
+                "agent": research_trace,
             }
         },
     }
@@ -470,11 +545,21 @@ async def run_agent(
     """Run the 4-node pipeline end-to-end. The caller is responsible for
     persisting the `AgentRun` row and the resulting `Draft`."""
     settings = get_settings()
-    llm = llm or get_llm_client()
 
-    # Load campaign to learn which model to use (or fall back to default).
+    # Model resolution, most specific first: this campaign's override, then the
+    # workspace's chosen model, then the server default.
     campaign = await _load_campaign(session, campaign_id)
-    model = campaign.llm_model or settings.llm_default_model
+    tenant = await session.get(Tenant, tenant_id)
+    model = (
+        campaign.llm_model
+        or (tenant.default_llm_model if tenant else None)
+        or settings.llm_default_model
+    )
+
+    # BYOK: bind the client to this tenant's own key for the chosen model's
+    # provider. Resolved AFTER the model is known, since the model decides
+    # which provider credential we need.
+    llm = await client_for(session, tenant_id=tenant_id, model=model, injected=llm)
 
     state = AgentState(
         tenant_id=tenant_id,

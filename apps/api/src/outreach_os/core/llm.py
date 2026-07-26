@@ -1,24 +1,41 @@
-"""LLM client — thin wrapper over LiteLLM.
+"""LLM client — thin wrapper over LiteLLM, with per-tenant (BYOK) credentials.
 
 Two surfaces:
 - `chat(model, messages, ...)` for completions
 - `embed(model, inputs)` for embeddings
 
-We use LiteLLM so a campaign can route to any provider (OpenAI, Anthropic,
-Gemini, Ollama, etc.) by changing the model name. Per-tenant API keys are
-expected to be in the environment (e.g. `OPENAI_API_KEY`); the per-tenant
-credential vault can be queried by callers to set them before invoking.
+**Bring Your Own Key.** Credentials are NEVER read from the process
+environment. Each call passes an explicit `api_key`/`api_base` resolved from
+the calling tenant's encrypted vault (see `services.llm_credentials`). This is
+the only correct option in a shared worker: a Celery process serves many
+tenants concurrently, so mutating `os.environ` per call would leak one
+tenant's key into another tenant's request.
 
-The wrapper is sync; LangGraph nodes call it from a `asyncio.to_thread` so
-the event loop doesn't block on network I/O.
+The wrapper is sync; LangGraph nodes call it from `asyncio.to_thread` so the
+event loop doesn't block on network I/O.
 """
 from __future__ import annotations
 
-import os
+import re
 from dataclasses import dataclass, field
 from typing import Any, Protocol
 
 import litellm
+
+
+@dataclass(frozen=True)
+class LLMCredentials:
+    """A single tenant's credentials for one provider."""
+
+    provider: str
+    api_key: str
+    # Optional override for self-hosted / proxied deployments (Ollama, Azure,
+    # vLLM, OpenRouter, ...).
+    api_base: str | None = None
+
+    def __repr__(self) -> str:  # pragma: no cover - defensive
+        """Never let a key reach a log line or traceback via repr."""
+        return f"LLMCredentials(provider={self.provider!r}, api_key='***', api_base={self.api_base!r})"
 
 
 @dataclass
@@ -40,6 +57,35 @@ class LLMError(RuntimeError):
     """Raised on any LLM failure (auth, rate limit, timeout, content filter)."""
 
 
+class LLMAuthError(LLMError):
+    """The tenant's key was rejected by the provider.
+
+    Separate from LLMError so the API layer can return 402/400 with a
+    "check your API key" message instead of a generic 500.
+    """
+
+
+# Providers echo the key back in some error payloads; scrub anything that
+# looks like a secret before it reaches a log or an API response.
+_SECRET_RE = re.compile(
+    r"\b(sk-[A-Za-z0-9_\-]{8,}|xai-[A-Za-z0-9_\-]{8,}|AIza[A-Za-z0-9_\-]{8,}"
+    r"|gsk_[A-Za-z0-9_\-]{8,}|[A-Za-z0-9_\-]{32,})\b"
+)
+
+
+def redact(text: str) -> str:
+    """Mask anything key-shaped in provider error text."""
+    return _SECRET_RE.sub("***", text)
+
+
+def _is_auth_error(exc: Exception) -> bool:
+    name = type(exc).__name__.lower()
+    if "authentication" in name or "permissiondenied" in name:
+        return True
+    status = getattr(exc, "status_code", None)
+    return status in (401, 403)
+
+
 class LLMClient(Protocol):
     """Thin provider-agnostic surface used by LangGraph nodes."""
 
@@ -52,6 +98,7 @@ class LLMClient(Protocol):
         temperature: float = 0.7,
         timeout: int | None = None,
         response_format: dict[str, str] | None = None,
+        tools: list[dict[str, Any]] | None = None,
     ) -> LLMResponse: ...
 
     def embed(
@@ -86,7 +133,25 @@ def _usage_from_response(resp: Any) -> LLMUsage:
 
 
 class LiteLLMClient:
-    """Default production client. Stateless — safe to share across requests."""
+    """Production client, bound to one tenant's credentials.
+
+    Construct one per run via `services.llm_credentials.resolve_llm_client`.
+    The instance holds no mutable state beyond its credentials, so it is safe
+    to use across threads for the lifetime of a single agent run.
+    """
+
+    def __init__(self, credentials: LLMCredentials) -> None:
+        self._credentials = credentials
+
+    @property
+    def provider(self) -> str:
+        return self._credentials.provider
+
+    def _auth_kwargs(self) -> dict[str, Any]:
+        kwargs: dict[str, Any] = {"api_key": self._credentials.api_key}
+        if self._credentials.api_base:
+            kwargs["api_base"] = self._credentials.api_base
+        return kwargs
 
     def chat(
         self,
@@ -97,6 +162,7 @@ class LiteLLMClient:
         temperature: float = 0.7,
         timeout: int | None = None,
         response_format: dict[str, str] | None = None,
+        tools: list[dict[str, Any]] | None = None,
     ) -> LLMResponse:
         msgs = _to_litellm_messages(messages)
         kwargs: dict[str, Any] = {
@@ -104,17 +170,41 @@ class LiteLLMClient:
             "messages": msgs,
             "max_tokens": max_tokens,
             "temperature": temperature,
+            **self._auth_kwargs(),
         }
         if timeout is not None:
             kwargs["timeout"] = timeout
         if response_format is not None:
             kwargs["response_format"] = response_format
+        if tools:
+            kwargs["tools"] = tools
+            kwargs["tool_choice"] = "auto"
         try:
             resp = litellm.completion(**kwargs)
         except Exception as exc:
-            raise LLMError(f"chat failed for model={model!r}: {exc}") from exc
-        text = (resp.choices[0].message.content or "").strip()
-        return LLMResponse(text=text, usage=_usage_from_response(resp))
+            detail = redact(str(exc))
+            if _is_auth_error(exc):
+                raise LLMAuthError(
+                    f"{self._credentials.provider} rejected the API key: {detail}"
+                ) from exc
+            raise LLMError(f"chat failed for model={model!r}: {detail}") from exc
+        choice = resp.choices[0].message
+        text = (choice.content or "").strip()
+        raw: dict[str, Any] | None = None
+        tool_calls = getattr(choice, "tool_calls", None)
+        if tool_calls:
+            # Surface tool calls to the agent loop without leaking the SDK type.
+            raw = {
+                "tool_calls": [
+                    {
+                        "id": tc.id,
+                        "name": tc.function.name,
+                        "arguments": tc.function.arguments,
+                    }
+                    for tc in tool_calls
+                ]
+            }
+        return LLMResponse(text=text, usage=_usage_from_response(resp), raw=raw)
 
     def embed(
         self,
@@ -125,64 +215,60 @@ class LiteLLMClient:
     ) -> list[list[float]]:
         if not inputs:
             return []
-        kwargs: dict[str, Any] = {"model": model, "input": inputs}
+        kwargs: dict[str, Any] = {
+            "model": model,
+            "input": inputs,
+            **self._auth_kwargs(),
+        }
         if timeout is not None:
             kwargs["timeout"] = timeout
         try:
             resp = litellm.embedding(**kwargs)
         except Exception as exc:
-            raise LLMError(f"embed failed for model={model!r}: {exc}") from exc
+            detail = redact(str(exc))
+            if _is_auth_error(exc):
+                raise LLMAuthError(
+                    f"{self._credentials.provider} rejected the API key: {detail}"
+                ) from exc
+            raise LLMError(f"embed failed for model={model!r}: {detail}") from exc
         # LiteLLM returns EmbeddingResponse; .data is a list of {embedding: [...]}.
         return [list(item["embedding"]) for item in resp.data]
 
 
-# --- Factory --------------------------------------------------------------
+# --- Test / override seam --------------------------------------------------
+#
+# There is deliberately no "default" production client: a real client cannot
+# exist without a tenant's key. `set_llm_client` exists so the test suite (and
+# the offline demo) can inject a deterministic fake; production leaves it unset
+# and every call site resolves a tenant-scoped client instead.
 
-_default_client: LLMClient | None = None
+_override_client: LLMClient | None = None
 
 
-def get_llm_client() -> LLMClient:
-    """Return the process-wide LLM client.
+def get_llm_client() -> LLMClient | None:
+    """Return the injected override client, or None if none is set.
 
-    Tests can monkeypatch this with a deterministic fake. The default
-    is the LiteLLM-backed real client. If no provider key is set in the
-    environment, fall back to a deterministic offline fake so local
-    dev + the e2e demo still produce end-to-end runs.
+    Returning None is the normal production case — callers must then resolve a
+    tenant-scoped client via `services.llm_credentials.resolve_llm_client`.
     """
-    global _default_client
-    if _default_client is None:
-        if not has_provider_credentials():
-            # Lazy import to avoid a top-level dependency from the tests'
-            # perspective (the fake lives in core/).
-            from outreach_os.core.fake_llm import FakeLLMClient
-            _default_client = FakeLLMClient()
-        else:
-            _default_client = LiteLLMClient()
-    return _default_client
+    return _override_client
 
 
 def set_llm_client(client: LLMClient | None) -> None:
-    """Override the default client. Pass None to reset."""
-    global _default_client
-    _default_client = client
+    """Override the client process-wide. Pass None to reset."""
+    global _override_client
+    _override_client = client
 
 
-def has_provider_credentials() -> bool:
-    """Cheap check: does *any* LiteLLM provider key exist in the env?
-
-    Used by tests and the e2e demo to decide whether to skip live LLM calls.
-    """
-    keys = (
-        "OPENAI_API_KEY",
-        "ANTHROPIC_API_KEY",
-        "GEMINI_API_KEY",
-        "GOOGLE_API_KEY",
-        "COHERE_API_KEY",
-        "MISTRAL_API_KEY",
-        "GROQ_API_KEY",
-    )
-    return any(os.environ.get(k) for k in keys)
-
-
-def has_openai_key() -> bool:
-    return bool(os.environ.get("OPENAI_API_KEY"))
+__all__ = [
+    "LLMAuthError",
+    "LLMClient",
+    "LLMCredentials",
+    "LLMError",
+    "LLMResponse",
+    "LLMUsage",
+    "LiteLLMClient",
+    "get_llm_client",
+    "redact",
+    "set_llm_client",
+]

@@ -2,13 +2,26 @@
 
 import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Plus, Trash2, FlaskConical } from "lucide-react";
+import {
+  CheckCircle2,
+  ExternalLink,
+  FlaskConical,
+  Plus,
+  ShieldCheck,
+  Trash2,
+} from "lucide-react";
 import { toast } from "sonner";
-import { api } from "@/lib/api-client";
+import { api, type ProviderOut } from "@/lib/api-client";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import {
+  Card,
+  CardContent,
+  CardDescription,
+  CardHeader,
+  CardTitle,
+} from "@/components/ui/card";
 import {
   Table,
   TableBody,
@@ -24,211 +37,321 @@ import {
   DialogFooter,
   DialogHeader,
   DialogTitle,
-  DialogTrigger,
 } from "@/components/ui/dialog";
 import { Badge } from "@/components/ui/badge";
 import { formatDate } from "@/lib/utils";
 
-const KIND_OPTIONS = [
-  "llm_openai",
-  "llm_anthropic",
-  "llm_gemini",
-  "serper",
-  "proxycurl",
-  "rapidapi",
-  "scrapingbee",
+/** Non-LLM integrations. The LLM providers come from the API so the list
+ *  cannot drift from what the backend actually supports. */
+const OTHER_KINDS = [
+  { kind: "serper", label: "Serper (web search)", console: "https://serper.dev/api-key" },
+  { kind: "proxycurl", label: "Proxycurl (LinkedIn)", console: "https://nubela.co/proxycurl" },
+  { kind: "rapidapi", label: "RapidAPI", console: "https://rapidapi.com/developer" },
+  { kind: "scrapingbee", label: "ScrapingBee", console: "https://app.scrapingbee.com/account" },
 ];
 
 export default function IntegrationsPage() {
   const queryClient = useQueryClient();
-  const [open, setOpen] = useState(false);
-  const [kind, setKind] = useState(KIND_OPTIONS[0]);
-  const [label, setLabel] = useState("");
+  const [dialogKind, setDialogKind] = useState<string | null>(null);
+  const [dialogLabel, setDialogLabel] = useState("");
   const [apiKey, setApiKey] = useState("");
 
-  const list = useQuery({
+  const providers = useQuery({
+    queryKey: ["providers"],
+    queryFn: () => api.listProviders(),
+  });
+  const credentials = useQuery({
     queryKey: ["credentials"],
     queryFn: () => api.listCredentials(),
   });
 
+  const invalidate = () => {
+    queryClient.invalidateQueries({ queryKey: ["credentials"] });
+    queryClient.invalidateQueries({ queryKey: ["providers"] });
+    queryClient.invalidateQueries({ queryKey: ["onboarding"] });
+  };
+
   const create = useMutation({
     mutationFn: () =>
       api.createCredential({
-        kind,
-        label,
-        secret_payload: { api_key: apiKey },
+        kind: dialogKind!,
+        label: dialogLabel.trim() || dialogKind!,
+        secret_payload: { api_key: apiKey.trim() },
       }),
     onSuccess: () => {
-      toast.success("Credential added");
-      setOpen(false);
-      setLabel("");
+      toast.success("Key saved and encrypted");
+      setDialogKind(null);
+      setDialogLabel("");
       setApiKey("");
-      queryClient.invalidateQueries({ queryKey: ["credentials"] });
+      invalidate();
     },
-    onError: (err: Error) => toast.error(err.message),
+    onError: (e: Error) => toast.error(e.message),
   });
 
   const remove = useMutation({
     mutationFn: (id: string) => api.deleteCredential(id),
     onSuccess: () => {
-      toast.success("Credential removed");
-      queryClient.invalidateQueries({ queryKey: ["credentials"] });
+      toast.success("Key removed");
+      invalidate();
     },
-    onError: (err: Error) => toast.error(err.message),
+    onError: (e: Error) => toast.error(e.message),
   });
 
   const test = useMutation({
     mutationFn: (id: string) => api.testCredential(id),
-    onSuccess: (res) => {
-      toast[res.ok ? "success" : "error"](res.message);
+    onSuccess: (r) => {
+      if (r.ok) toast.success(r.message);
+      else toast.error(r.message);
+      invalidate();
     },
-    onError: (err: Error) => toast.error(err.message),
+    onError: (e: Error) => toast.error(e.message),
   });
+
+  const openDialog = (kind: string, label: string) => {
+    setDialogKind(kind);
+    setDialogLabel(label);
+    setApiKey("");
+  };
 
   return (
     <div className="space-y-6">
-      <div className="flex items-end justify-between">
-        <div>
-          <h1 className="text-2xl font-semibold tracking-tight">Integrations</h1>
-          <p className="text-muted-foreground">
-            API keys for LLM providers and scraping services. Stored encrypted with a per-tenant key.
-          </p>
-        </div>
-        <Dialog open={open} onOpenChange={setOpen}>
-          <DialogTrigger asChild>
-            <Button>
-              <Plus className="mr-2 h-4 w-4" />
-              Add credential
-            </Button>
-          </DialogTrigger>
-          <DialogContent>
-            <DialogHeader>
-              <DialogTitle>Add credential</DialogTitle>
-              <DialogDescription>
-                The secret is encrypted on the way in. You can re-test or delete at any time.
-              </DialogDescription>
-            </DialogHeader>
-            <form
-              onSubmit={(e) => {
-                e.preventDefault();
-                create.mutate();
-              }}
-              className="space-y-4"
-            >
-              <div className="space-y-1.5">
-                <Label htmlFor="kind">Kind</Label>
-                <select
-                  id="kind"
-                  value={kind}
-                  onChange={(e) => setKind(e.target.value)}
-                  className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
-                >
-                  {KIND_OPTIONS.map((k) => (
-                    <option key={k} value={k}>
-                      {k}
-                    </option>
-                  ))}
-                </select>
-              </div>
-              <div className="space-y-1.5">
-                <Label htmlFor="label">Label</Label>
-                <Input
-                  id="label"
-                  value={label}
-                  onChange={(e) => setLabel(e.target.value)}
-                  placeholder="e.g. OpenAI prod"
-                  required
-                />
-              </div>
-              <div className="space-y-1.5">
-                <Label htmlFor="api_key">API key</Label>
-                <Input
-                  id="api_key"
-                  type="password"
-                  value={apiKey}
-                  onChange={(e) => setApiKey(e.target.value)}
-                  required
-                />
-              </div>
-              <DialogFooter>
-                <Button
-                  type="button"
-                  variant="outline"
-                  onClick={() => setOpen(false)}
-                >
-                  Cancel
-                </Button>
-                <Button type="submit" disabled={create.isPending}>
-                  {create.isPending ? "Saving…" : "Save"}
-                </Button>
-              </DialogFooter>
-            </form>
-          </DialogContent>
-        </Dialog>
+      <div>
+        <h1 className="text-2xl font-semibold tracking-tight">Integrations</h1>
+        <p className="text-sm text-muted-foreground">
+          Bring your own keys. Everything is encrypted with a key unique to your
+          workspace, and AI usage is billed to your own provider account — we
+          never proxy through a shared key.
+        </p>
       </div>
 
       <Card>
         <CardHeader>
-          <CardTitle>Configured credentials</CardTitle>
+          <CardTitle className="flex items-center gap-2 text-base">
+            <ShieldCheck className="h-4 w-4" aria-hidden="true" />
+            AI providers
+          </CardTitle>
           <CardDescription>
-            Secrets never leave the server after creation. Use &ldquo;Test&rdquo; to verify the stored value.
+            Connect at least one to generate drafts. Choose which model to use in{" "}
+            <a href="/settings" className="underline">
+              Settings
+            </a>
+            .
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-2">
+          {providers.isLoading && (
+            <p className="text-sm text-muted-foreground">Loading providers…</p>
+          )}
+          {providers.data?.map((p) => (
+            <ProviderRow key={p.provider} provider={p} onConnect={openDialog} />
+          ))}
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader>
+          <CardTitle className="text-base">Lead data providers</CardTitle>
+          <CardDescription>
+            Optional. Without these, lead discovery and the agent&apos;s web-search
+            tool are unavailable.
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-2">
+          {OTHER_KINDS.map((o) => {
+            const connected = credentials.data?.some((c) => c.kind === o.kind);
+            return (
+              <div
+                key={o.kind}
+                className="flex items-center justify-between rounded-md border px-3 py-2"
+              >
+                <div className="flex items-center gap-2">
+                  <span className="text-sm font-medium">{o.label}</span>
+                  {connected && (
+                    <Badge variant="secondary" className="gap-1">
+                      <CheckCircle2 className="h-3 w-3" aria-hidden="true" />
+                      Connected
+                    </Badge>
+                  )}
+                </div>
+                <div className="flex items-center gap-2">
+                  <a
+                    href={o.console}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="text-xs text-muted-foreground underline"
+                  >
+                    Get a key
+                  </a>
+                  <Button
+                    size="sm"
+                    variant={connected ? "outline" : "default"}
+                    onClick={() => openDialog(o.kind, o.label)}
+                  >
+                    <Plus className="mr-1 h-3 w-3" aria-hidden="true" />
+                    {connected ? "Replace" : "Connect"}
+                  </Button>
+                </div>
+              </div>
+            );
+          })}
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader>
+          <CardTitle className="text-base">Stored keys</CardTitle>
+          <CardDescription>
+            Secrets are never returned by the API — not even to you. Replace a key
+            by connecting a new one.
           </CardDescription>
         </CardHeader>
         <CardContent>
-          {list.isLoading && <p className="text-sm text-muted-foreground">Loading…</p>}
-          {list.data && list.data.length === 0 && (
-            <p className="text-sm text-muted-foreground">
-              No credentials yet. Add one to enable the campaign engine in Phase 3.
-            </p>
-          )}
-          {list.data && list.data.length > 0 && (
-            <Table>
-              <TableHeader>
+          <Table>
+            <TableHeader>
+              <TableRow>
+                <TableHead>Label</TableHead>
+                <TableHead>Kind</TableHead>
+                <TableHead>Added</TableHead>
+                <TableHead>Verified</TableHead>
+                <TableHead className="w-[140px]" />
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {credentials.data?.length === 0 && (
                 <TableRow>
-                  <TableHead>Kind</TableHead>
-                  <TableHead>Label</TableHead>
-                  <TableHead>Created</TableHead>
-                  <TableHead className="w-32 text-right">Actions</TableHead>
+                  <TableCell colSpan={5} className="text-sm text-muted-foreground">
+                    No keys stored yet.
+                  </TableCell>
                 </TableRow>
-              </TableHeader>
-              <TableBody>
-                {list.data.map((c) => (
-                  <TableRow key={c.id}>
-                    <TableCell>
-                      <Badge variant="secondary">{c.kind}</Badge>
-                    </TableCell>
-                    <TableCell>{c.label}</TableCell>
-                    <TableCell className="text-muted-foreground">
-                      {formatDate(c.created_at)}
-                    </TableCell>
-                    <TableCell className="text-right">
-                      <div className="flex justify-end gap-2">
-                        <Button
-                          size="sm"
-                          variant="outline"
-                          onClick={() => test.mutate(c.id)}
-                          disabled={test.isPending}
-                        >
-                          <FlaskConical className="mr-1 h-3 w-3" />
-                          Test
-                        </Button>
-                        <Button
-                          size="sm"
-                          variant="ghost"
-                          onClick={() => remove.mutate(c.id)}
-                          disabled={remove.isPending}
-                        >
-                          <Trash2 className="h-3 w-3" />
-                        </Button>
-                      </div>
-                    </TableCell>
-                  </TableRow>
-                ))}
-              </TableBody>
-            </Table>
-          )}
+              )}
+              {credentials.data?.map((c) => (
+                <TableRow key={c.id}>
+                  <TableCell className="font-medium">{c.label}</TableCell>
+                  <TableCell>
+                    <Badge variant="outline">{c.kind}</Badge>
+                  </TableCell>
+                  <TableCell className="text-sm text-muted-foreground">
+                    {formatDate(c.created_at)}
+                  </TableCell>
+                  <TableCell className="text-sm text-muted-foreground">
+                    {c.last_verified_at ? formatDate(c.last_verified_at) : "—"}
+                  </TableCell>
+                  <TableCell className="text-right">
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      onClick={() => test.mutate(c.id)}
+                      disabled={test.isPending}
+                      title="Make a live call to the provider"
+                    >
+                      <FlaskConical className="h-4 w-4" aria-hidden="true" />
+                    </Button>
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      onClick={() => remove.mutate(c.id)}
+                      disabled={remove.isPending}
+                    >
+                      <Trash2 className="h-4 w-4" aria-hidden="true" />
+                    </Button>
+                  </TableCell>
+                </TableRow>
+              ))}
+            </TableBody>
+          </Table>
         </CardContent>
       </Card>
+
+      <Dialog open={dialogKind !== null} onOpenChange={(o) => !o && setDialogKind(null)}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Connect {dialogLabel}</DialogTitle>
+            <DialogDescription>
+              Pasted keys are encrypted immediately with your workspace key. They
+              are never written to logs and never returned by the API.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-3">
+            <div className="space-y-1">
+              <Label htmlFor="cred-label">Label</Label>
+              <Input
+                id="cred-label"
+                value={dialogLabel}
+                onChange={(e) => setDialogLabel(e.target.value)}
+                placeholder="e.g. Production key"
+              />
+            </div>
+            <div className="space-y-1">
+              <Label htmlFor="cred-key">API key</Label>
+              <Input
+                id="cred-key"
+                type="password"
+                autoComplete="off"
+                value={apiKey}
+                onChange={(e) => setApiKey(e.target.value)}
+                placeholder="sk-…"
+              />
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setDialogKind(null)}>
+              Cancel
+            </Button>
+            <Button
+              onClick={() => create.mutate()}
+              disabled={!apiKey.trim() || create.isPending}
+            >
+              {create.isPending ? "Saving…" : "Save key"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+    </div>
+  );
+}
+
+function ProviderRow({
+  provider,
+  onConnect,
+}: {
+  provider: ProviderOut;
+  onConnect: (kind: string, label: string) => void;
+}) {
+  return (
+    <div className="flex items-center justify-between rounded-md border px-3 py-2">
+      <div className="flex items-center gap-2">
+        <span className="text-sm font-medium">{provider.label}</span>
+        {provider.connected ? (
+          <Badge variant={provider.last_verified_at ? "default" : "secondary"} className="gap-1">
+            <CheckCircle2 className="h-3 w-3" aria-hidden="true" />
+            {provider.last_verified_at ? "Verified" : "Connected"}
+          </Badge>
+        ) : null}
+        {provider.supports_embeddings && (
+          <Badge variant="outline" className="text-xs">
+            supports embeddings
+          </Badge>
+        )}
+      </div>
+      <div className="flex items-center gap-2">
+        <a
+          href={provider.console_url}
+          target="_blank"
+          rel="noreferrer"
+          className="flex items-center gap-1 text-xs text-muted-foreground underline"
+        >
+          Get a key
+          <ExternalLink className="h-3 w-3" aria-hidden="true" />
+        </a>
+        <Button
+          size="sm"
+          variant={provider.connected ? "outline" : "default"}
+          onClick={() => onConnect(provider.credential_kind, provider.label)}
+        >
+          <Plus className="mr-1 h-3 w-3" aria-hidden="true" />
+          {provider.connected ? "Replace" : "Connect"}
+        </Button>
+      </div>
     </div>
   );
 }

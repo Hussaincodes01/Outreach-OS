@@ -7,8 +7,10 @@ from __future__ import annotations
 
 import uuid
 from datetime import datetime
+from typing import Any
 
 from sqlalchemy import CheckConstraint, Integer, Text, text
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.dialects.postgresql import UUID as PG_UUID
 from sqlalchemy.orm import Mapped, mapped_column
 from sqlalchemy.sql.sqltypes import TIMESTAMP
@@ -40,6 +42,18 @@ class Tenant(Base):
     month_usage_reset_at: Mapped[datetime] = mapped_column(
         TIMESTAMP(timezone=True), nullable=False,
         server_default=text("date_trunc('month', now())"),
+    )
+    # BYOK: the model this tenant drafts with, as a LiteLLM `provider/model`
+    # string. NULL means "use the server default". The provider prefix decides
+    # which of the tenant's own API keys gets used.
+    default_llm_model: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # Self-serve onboarding progress, e.g. {"llm_connected": true, ...}.
+    # Free-form so adding a step doesn't need a migration.
+    onboarding_state: Mapped[dict[str, Any]] = mapped_column(
+        JSONB, nullable=False, server_default=text("'{}'::jsonb")
+    )
+    onboarding_completed_at: Mapped[datetime | None] = mapped_column(
+        TIMESTAMP(timezone=True), nullable=True
     )
     created_at: Mapped[datetime] = mapped_column(
         TIMESTAMP(timezone=True), nullable=False, server_default="now()"

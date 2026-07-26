@@ -24,12 +24,13 @@ from sqlalchemy import CursorResult, delete, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from outreach_os.core.config import get_settings
-from outreach_os.core.llm import LLMClient, get_llm_client
+from outreach_os.core.llm import LLMClient
 from outreach_os.domain.models.knowledge_base_chunk import (
     EMBEDDING_DIM,
     KnowledgeBaseChunk,
 )
 from outreach_os.domain.models.knowledge_base_item import KnowledgeBaseItem
+from outreach_os.services.llm_credentials import client_for
 
 # --- Tokenizer --------------------------------------------------------------
 
@@ -88,8 +89,18 @@ class RetrievedChunk:
 class RAGService:
     def __init__(self, session: AsyncSession, *, llm: LLMClient | None = None) -> None:
         self.session = session
-        self.llm = llm or get_llm_client()
+        # None in production: embeddings run on the tenant's own key, resolved
+        # per call. Tests inject a deterministic fake here.
+        self.llm = llm
         self.settings = get_settings()
+
+    async def _embedder(self, tenant_id: uuid.UUID) -> LLMClient:
+        return await client_for(
+            self.session,
+            tenant_id=tenant_id,
+            model=self.settings.llm_embedding_model,
+            injected=self.llm,
+        )
 
     # --- Writes ---
 
@@ -110,9 +121,8 @@ class RAGService:
             overlap_tokens=self.settings.rag_chunk_overlap_tokens,
         )
         if chunks:
-            embeddings = self.llm.embed(
-                self.settings.llm_embedding_model, chunks
-            )
+            embedder = await self._embedder(tenant_id)
+            embeddings = embedder.embed(self.settings.llm_embedding_model, chunks)
             for idx, (text_chunk, vec) in enumerate(zip(chunks, embeddings, strict=True)):
                 if len(vec) != EMBEDDING_DIM:
                     raise ValueError(
@@ -212,7 +222,8 @@ class RAGService:
         if not query.strip():
             return []
 
-        query_vec = self.llm.embed(self.settings.llm_embedding_model, [query])[0]
+        embedder = await self._embedder(tenant_id)
+        query_vec = embedder.embed(self.settings.llm_embedding_model, [query])[0]
         if len(query_vec) != EMBEDDING_DIM:
             raise ValueError(
                 f"query embedding dim mismatch: {len(query_vec)} vs {EMBEDDING_DIM}"
