@@ -119,8 +119,11 @@ class Settings(BaseSettings):
     scraping_job_timeout: int = 600
     # Fallback to StealthyFetcher (headless browser) when Fetcher gets blocked.
     scraping_use_stealth_fallback: bool = True
-    # Respect robots.txt Disallow/Crawl-delay directives.
-    scraping_robots_obey: bool = True
+    # NOTE: a `scraping_robots_obey` flag used to live here, documented as
+    # "Respect robots.txt Disallow/Crawl-delay directives". Nothing read it, so
+    # it promised a compliance guarantee the scraper never enforced. Removed
+    # rather than left in place — an operator seeing it default to True would
+    # reasonably believe robots.txt was honoured. Tracked on the roadmap.
     # Fetch the lead's website during agent research for live context.
     scraping_live_research_enabled: bool = True
     scraping_live_research_max_chars: int = 600

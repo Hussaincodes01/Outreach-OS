@@ -267,6 +267,103 @@ async def test_non_1536_embedding_model_is_rejected(client) -> None:
 
 
 @pytest.mark.asyncio
+async def test_omitted_setting_is_left_alone_not_reset(client) -> None:
+    """PUT used to assign both fields unconditionally, so a client sending only
+    the chat model silently cleared the embedding model — changing how future
+    chunks embed and stranding existing vectors."""
+    a = await signup(
+        client,
+        email=unique_email(),
+        password="correct-horse-battery-staple",
+        tenant_name="Partial",
+    )
+    headers = bearer(a["access_token"])
+    for kind in ("llm_openai", "llm_deepseek"):
+        await client.post(
+            "/v1/credentials",
+            json={"kind": kind, "label": kind, "secret_payload": {"api_key": "sk-t"}},
+            headers=headers,
+        )
+    await client.put(
+        "/v1/onboarding/llm-settings",
+        json={
+            "default_llm_model": "openai/gpt-4o-mini",
+            "embedding_llm_model": "openai/text-embedding-3-small",
+        },
+        headers=headers,
+    )
+    # Send ONLY the chat model.
+    resp = await client.put(
+        "/v1/onboarding/llm-settings",
+        json={"default_llm_model": "deepseek/deepseek-chat"},
+        headers=headers,
+    )
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["default_llm_model"] == "deepseek/deepseek-chat"
+    assert body["embedding_llm_model"] == "openai/text-embedding-3-small"
+
+
+@pytest.mark.asyncio
+async def test_explicit_null_still_resets(client) -> None:
+    """"Leave alone" must not make it impossible to clear a setting."""
+    a = await signup(
+        client,
+        email=unique_email(),
+        password="correct-horse-battery-staple",
+        tenant_name="Reset",
+    )
+    headers = bearer(a["access_token"])
+    await client.post(
+        "/v1/credentials",
+        json={"kind": "llm_openai", "label": "o", "secret_payload": {"api_key": "sk-t"}},
+        headers=headers,
+    )
+    await client.put(
+        "/v1/onboarding/llm-settings",
+        json={"default_llm_model": "openai/gpt-4o-mini"},
+        headers=headers,
+    )
+    resp = await client.put(
+        "/v1/onboarding/llm-settings",
+        json={"default_llm_model": None},
+        headers=headers,
+    )
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["default_llm_model"] is None
+
+
+@pytest.mark.asyncio
+async def test_credential_saved_under_token_is_usable(client) -> None:
+    """The create endpoint accepts `token`; the resolver must read it too, or
+    the workspace shows "connected" while every draft fails."""
+    a = await signup(
+        client,
+        email=unique_email(),
+        password="correct-horse-battery-staple",
+        tenant_name="TokenField",
+    )
+    headers = bearer(a["access_token"])
+    resp = await client.post(
+        "/v1/credentials",
+        json={
+            "kind": "llm_openai",
+            "label": "via token",
+            "secret_payload": {"token": "sk-stored-under-token"},
+        },
+        headers=headers,
+    )
+    assert resp.status_code == 201, resp.text
+    # Selecting a model requires load_credentials() to find a usable key.
+    resp = await client.put(
+        "/v1/onboarding/llm-settings",
+        json={"default_llm_model": "openai/gpt-4o-mini"},
+        headers=headers,
+    )
+    assert resp.status_code == 200, resp.text
+
+
+@pytest.mark.asyncio
 async def test_self_hosted_provider_rejects_a_missing_base_url(client) -> None:
     a = await signup(
         client,

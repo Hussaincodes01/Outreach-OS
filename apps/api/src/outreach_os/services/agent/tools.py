@@ -26,10 +26,10 @@ from typing import Any
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from outreach_os.core.llm import LLMClient
 from outreach_os.domain.models.lead import Lead
 from outreach_os.domain.models.reply import Reply
 from outreach_os.domain.models.send import Send
+from outreach_os.domain.models.sequence_step import SequenceStep
 
 log = logging.getLogger(__name__)
 
@@ -45,10 +45,14 @@ class ToolContext:
     session: AsyncSession
     tenant_id: uuid.UUID
     lead_id: uuid.UUID
-    # The tenant's own LLM client, for tools that need embeddings (RAG).
-    llm: LLMClient
     # Decrypted, tenant-owned third-party keys (BYOK), keyed by credential kind.
     api_keys: dict[str, str]
+    #
+    # Deliberately NO llm client here. The knowledge-base tool needs
+    # *embeddings*, which usually run on a different provider than chat, and
+    # carrying the chat client on the context is what led to embedding calls
+    # going out with the wrong provider's key. Tools that need a model resolve
+    # one for the job they are doing.
 
 
 ToolFn = Callable[[ToolContext, dict[str, Any]], Awaitable[str]]
@@ -106,7 +110,9 @@ async def _search_knowledge_base(ctx: ToolContext, args: dict[str, Any]) -> str:
     query = str(args.get("query") or "").strip()
     if not query:
         return "A non-empty 'query' is required."
-    rag = RAGService(ctx.session, llm=ctx.llm)
+    # No client injected: RAGService resolves the embedding model's own
+    # provider (see the note on ToolContext).
+    rag = RAGService(ctx.session)
     try:
         chunks = await rag.search(tenant_id=ctx.tenant_id, query=query)
     except Exception as exc:
@@ -149,11 +155,20 @@ async def _get_previous_touches(ctx: ToolContext, args: dict[str, Any]) -> str:
     Lets the model avoid repeating an angle that already failed, and reference
     an earlier message on follow-up steps.
     """
+    # Scope to THIS lead. Filtering on tenant alone would hand the model the
+    # workspace's five most recent emails to anyone, and present them as this
+    # prospect's history — inventing a relationship that does not exist and
+    # leaking another lead's correspondence into the prompt. Send has no
+    # lead_id of its own, so the link runs through SequenceStep.
     sends = (
         (
             await ctx.session.execute(
                 select(Send)
-                .where(Send.tenant_id == ctx.tenant_id)
+                .join(SequenceStep, SequenceStep.id == Send.step_id)
+                .where(
+                    Send.tenant_id == ctx.tenant_id,
+                    SequenceStep.lead_id == ctx.lead_id,
+                )
                 .order_by(Send.created_at.desc())
                 .limit(5)
             )

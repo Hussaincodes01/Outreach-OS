@@ -28,6 +28,7 @@ from outreach_os.domain.models.reply import Reply
 from outreach_os.domain.models.send import Send
 from outreach_os.domain.models.sequence_step import SequenceStep
 from outreach_os.domain.models.suppression import Suppression
+from outreach_os.domain.models.tenant import Tenant
 from outreach_os.domain.schemas.phase4 import ReplyIngestIn
 from outreach_os.services.llm_credentials import client_for
 
@@ -59,13 +60,23 @@ class ReplyService:
         self.llm = llm
         self.settings = get_settings()
 
-    async def _get_llm(self, tenant_id: uuid.UUID) -> LLMClient:
+    async def _model_for(self, tenant_id: uuid.UUID) -> str:
+        """The workspace's chosen model, else the server default.
+
+        Using the server default unconditionally would look up a key for the
+        wrong provider: a workspace that only connected Anthropic would raise
+        MissingLLMCredentialsError for `openai/...`, get caught below, and
+        never classify a single reply.
+        """
+        tenant = await self.session.get(Tenant, tenant_id)
+        return (
+            tenant.default_llm_model if tenant and tenant.default_llm_model else None
+        ) or self.settings.llm_default_model
+
+    async def _get_llm(self, tenant_id: uuid.UUID, model: str) -> LLMClient:
         """Reply classification runs on the tenant's own key (BYOK)."""
         return await client_for(
-            self.session,
-            tenant_id=tenant_id,
-            model=self.settings.llm_default_model,
-            injected=self.llm,
+            self.session, tenant_id=tenant_id, model=model, injected=self.llm
         )
 
     async def ingest(
@@ -135,8 +146,9 @@ class ReplyService:
     async def _classify_and_act(
         self, *, tenant_id: uuid.UUID, reply: Reply, send: Send
     ) -> None:
+        model = await self._model_for(tenant_id)
         try:
-            llm = await self._get_llm(tenant_id)
+            llm = await self._get_llm(tenant_id, model)
         except OutreachError as exc:
             # No key connected — leave the reply un-classified rather than
             # failing the whole inbound webhook.
@@ -150,7 +162,7 @@ class ReplyService:
         )
         try:
             resp = llm.chat(
-                self.settings.llm_default_model,
+                model,
                 [
                     {"role": "system", "content": _CLASSIFY_SYSTEM},
                     {"role": "user", "content": prompt},

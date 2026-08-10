@@ -227,7 +227,6 @@ async def _run_tool_research(
             session=session,
             tenant_id=state.tenant_id,
             lead_id=state.lead_id,
-            llm=llm,
             api_keys=api_keys,
         )
         task = (
@@ -265,7 +264,15 @@ async def _node_research(
     step = await _load_step(session, state.step_id)
 
     # RAG: build a query from the lead + step, return top-k chunks.
-    rag = RAGService(session, llm=llm)
+    #
+    # Deliberately NOT given `llm`: that is the tenant's *chat* client, and
+    # embeddings usually run on a different provider (Anthropic and Ollama
+    # have no embeddings API at all). Passing it would send the chat
+    # provider's key to the embedding endpoint, and the resulting auth error
+    # is swallowed by the handler below — so RAG would silently never work.
+    # With no client injected, RAGService resolves the embedding model's own
+    # provider; the test override in `set_llm_client` still applies.
+    rag = RAGService(session)
     query = f"{step.goal or ''} {lead.title or ''} {lead.company_name or ''} {lead.industry or ''}".strip()
     chunks: list[RetrievedChunk] = []
     if query:

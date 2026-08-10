@@ -27,7 +27,10 @@ from outreach_os.services.scraping.raw_lead import RawLead
 log = logging.getLogger(__name__)
 
 _FETCH_TIMEOUT = 15
-_STEALTHY_TIMEOUT = 30
+# Milliseconds, not seconds — Scrapling passes this straight through to
+# Playwright, whose own default is 30000. Setting 30 here meant every stealth
+# fetch aborted after 30ms, i.e. the anti-bot fallback never once succeeded.
+_STEALTHY_TIMEOUT_MS = 30_000
 _TEAM_PATHS = ("/team", "/about", "/about-us", "/leadership", "/people", "/contact")
 _EMAIL_RE = re.compile(r"\b[\w.+\-]+@([\w\-]+\.)+[a-zA-Z]{2,}\b")
 # Image filenames regularly get picked up by the email regex (e.g. "logo@2x.png").
@@ -71,7 +74,7 @@ def _stealthy_fetch(url: str) -> tuple[int, str] | None:
             url,
             headless=True,
             network_idle=True,
-            timeout=_STEALTHY_TIMEOUT,
+            timeout=_STEALTHY_TIMEOUT_MS,
             # `disable_resources` drops images/media/fonts/etc. Scrapling has
             # no `block_images`/`block_css` options — passing those raised a
             # TypeError that the `except Exception` below swallowed, so the

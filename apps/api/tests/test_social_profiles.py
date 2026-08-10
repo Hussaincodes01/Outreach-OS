@@ -6,6 +6,8 @@ from __future__ import annotations
 
 from unittest.mock import MagicMock, patch
 
+import pytest
+
 from outreach_os.services.scraping.sources.social_profiles import (
     _detect_platform,
     _extract_github_profile,
@@ -26,6 +28,34 @@ class TestDetectPlatform:
 
     def test_unknown(self) -> None:
         assert _detect_platform("https://facebook.com/johndoe") == "unknown"
+
+    @pytest.mark.parametrize(
+        "url",
+        [
+            "https://netflix.com/careers",
+            "https://www.matrix.com/about",
+            "https://linux.com/team",
+            "https://mailbox.com/contact",
+        ],
+    )
+    def test_lookalike_domains_are_not_twitter(self, url: str) -> None:
+        """Regression: detection used `"x.com" in host`, which matches every
+        one of these. Ordinary company sites were handed to the Twitter parser,
+        which then produced leads from Open Graph tags that mean something
+        entirely different."""
+        assert _detect_platform(url) == "unknown"
+
+    @pytest.mark.parametrize(
+        ("url", "expected"),
+        [
+            ("https://www.x.com/johndoe", "twitter"),
+            ("https://mobile.twitter.com/johndoe", "twitter"),
+            ("https://x.com:443/johndoe", "twitter"),
+            ("https://www.github.com/johndoe", "github"),
+        ],
+    )
+    def test_subdomains_and_ports_still_match(self, url: str, expected: str) -> None:
+        assert _detect_platform(url) == expected
 
 
 class TestExtractTwitterProfile:

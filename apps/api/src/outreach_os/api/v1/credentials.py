@@ -179,8 +179,10 @@ async def test_credential(
             ok=True, message="stored and decryptable", verified_live=False
         )
 
+    # Pass the row explicitly: a workspace may hold several keys for one
+    # provider, and Test must report on the one the user clicked.
     ok, message = await verify_credentials(
-        db, tenant_id=user.tenant_id, provider=spec.provider
+        db, tenant_id=user.tenant_id, provider=spec.provider, credential=cred
     )
     if ok:
         cred.last_verified_at = datetime.now(timezone.utc)

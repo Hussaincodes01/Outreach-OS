@@ -155,7 +155,15 @@ async def update_llm_settings(
     if tenant is None:
         raise HTTPException(status_code=404, detail="tenant not found")
 
-    for model in (body.default_llm_model, body.embedding_llm_model):
+    # Treat omitted fields as "leave alone" and an explicit null as "reset".
+    # Assigning both unconditionally meant a client sending only the chat model
+    # silently cleared the embedding model — which changes how future chunks
+    # are embedded and leaves existing vectors unsearchable.
+    provided = body.model_fields_set
+    for field_name in ("default_llm_model", "embedding_llm_model"):
+        if field_name not in provided:
+            continue
+        model = getattr(body, field_name)
         if model is None:
             continue
         try:
@@ -171,7 +179,7 @@ async def update_llm_settings(
                 detail=f"Connect a {provider} API key before selecting {model}.",
             )
 
-    if body.embedding_llm_model is not None:
+    if "embedding_llm_model" in provided and body.embedding_llm_model is not None:
         # The knowledge-base vector column is a fixed width, so an embedding
         # model of any other size would fail at insert time, long after the
         # user made the choice.
@@ -185,8 +193,10 @@ async def update_llm_settings(
                 ),
             )
 
-    tenant.default_llm_model = body.default_llm_model
-    tenant.embedding_llm_model = body.embedding_llm_model
+    if "default_llm_model" in provided:
+        tenant.default_llm_model = body.default_llm_model
+    if "embedding_llm_model" in provided:
+        tenant.embedding_llm_model = body.embedding_llm_model
     await db.flush()
     await write_audit_event(
         db,

@@ -454,7 +454,13 @@ async def load_credentials(
     ).scalar_one_or_none()
     if cred is None:
         return None
+    return _credentials_from_row(tenant_id, spec, cred)
 
+
+def _credentials_from_row(
+    tenant_id: uuid.UUID, spec: ProviderSpec, cred: Credential
+) -> LLMCredentials | None:
+    """Decrypt one credential row into usable provider credentials."""
     try:
         payload = vault_service.decrypt_for_tenant(str(tenant_id), cred.ciphertext)
     except Exception:
@@ -465,7 +471,12 @@ async def load_credentials(
         )
         return None
 
-    api_key = str(payload.get("api_key") or payload.get("key") or "").strip()
+    # `token` is accepted by the create endpoint, so it must be read here too —
+    # otherwise a credential saved under that name shows as "connected" while
+    # every call fails for want of a key.
+    api_key = str(
+        payload.get("api_key") or payload.get("key") or payload.get("token") or ""
+    ).strip()
     api_base = str(payload.get("api_base") or "").strip() or spec.api_base_hint
 
     if spec.requires_api_key and not api_key:
@@ -477,7 +488,7 @@ async def load_credentials(
         # non-empty value on the field.
         api_key = "not-required"
 
-    return LLMCredentials(provider=provider, api_key=api_key, api_base=api_base)
+    return LLMCredentials(provider=spec.provider, api_key=api_key, api_base=api_base)
 
 
 async def resolve_llm_client(
@@ -517,21 +528,33 @@ async def client_for(
 
 
 async def verify_credentials(
-    session: AsyncSession, *, tenant_id: uuid.UUID, provider: str
+    session: AsyncSession,
+    *,
+    tenant_id: uuid.UUID,
+    provider: str,
+    credential: Credential | None = None,
 ) -> tuple[bool, str]:
     """Make one cheap real call to prove the key works.
 
-    Returns (ok, message). Used by the "Test" button and the onboarding
-    checklist — decrypting successfully says nothing about whether the
-    provider will accept the key, which is what a user actually wants to know.
+    Returns (ok, message). Decrypting successfully says nothing about whether
+    the provider will accept the key, which is what a user actually wants to
+    know.
+
+    Pass `credential` to test one specific row. Without it we fall back to the
+    tenant's newest credential for the provider — fine for the onboarding
+    check, but wrong for a Test button next to a particular key when the
+    workspace holds more than one for that provider.
     """
     spec = _BY_PROVIDER.get(provider)
     if spec is None:
         return False, f"unsupported provider {provider!r}"
 
-    creds = await load_credentials(session, tenant_id=tenant_id, provider=provider)
+    if credential is not None:
+        creds = _credentials_from_row(tenant_id, spec, credential)
+    else:
+        creds = await load_credentials(session, tenant_id=tenant_id, provider=provider)
     if creds is None:
-        return False, "no API key stored for this provider"
+        return False, "no usable API key stored for this provider"
 
     client = LiteLLMClient(creds)
     try:

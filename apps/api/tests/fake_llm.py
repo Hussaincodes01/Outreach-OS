@@ -51,6 +51,11 @@ class FakeLLMClient:
         # Tests can set this to override the canned reply classification.
         # Tuple: (classification, confidence, reason). Consumed once.
         self.next_reply_classification: tuple[str, float, str] | None = None
+        # Queue of tool-call batches for the research agent, popped one per
+        # chat() call. Each entry is a list of {id, name, arguments} dicts.
+        # Empty queue -> the fake "answers" instead of calling a tool, which
+        # is how the loop terminates.
+        self.next_tool_calls: list[list[dict[str, str]]] = []
 
     def chat(
         self,
@@ -61,10 +66,24 @@ class FakeLLMClient:
         temperature: float = 0.7,
         timeout: int | None = None,
         response_format: dict[str, str] | None = None,
+        tools: list[dict[str, Any]] | None = None,
     ) -> LLMResponse:
         self.calls.append(
-            {"model": model, "messages": list(messages), "max_tokens": max_tokens}
+            {
+                "model": model,
+                "messages": list(messages),
+                "max_tokens": max_tokens,
+                "tools": [t["function"]["name"] for t in tools] if tools else None,
+            }
         )
+        # Mirror the real client: tool calls come back on `raw`, not in text.
+        if tools and self.next_tool_calls:
+            batch = self.next_tool_calls.pop(0)
+            return LLMResponse(
+                text="",
+                usage=LLMUsage(input_tokens=40, output_tokens=20),
+                raw={"tool_calls": batch},
+            )
         system = messages[0]["content"] if messages else ""
         user = messages[-1]["content"] if len(messages) > 1 else ""
 
@@ -152,6 +171,7 @@ class FakeLLMClient:
         inputs: list[str],
         *,
         timeout: int | None = None,
+        dimensions: int | None = None,
     ) -> list[list[float]]:
         self.calls.append({"model": model, "embed": list(inputs)})
         return [_text_to_vec(s) for s in inputs]

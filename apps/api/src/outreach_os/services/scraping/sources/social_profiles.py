@@ -124,12 +124,24 @@ def _extract_github_profile(url: str, html: str) -> RawLead | None:
         return None
 
 
+def _host_matches(host: str, domain: str) -> bool:
+    """True when `host` is `domain` itself or a subdomain of it.
+
+    Substring matching is unsafe here: `"x.com" in host` also matches
+    netflix.com, matrix.com, linux.com and mailbox.com, all of which would be
+    handed to the Twitter parser and produce nonsense leads.
+    """
+    return host == domain or host.endswith("." + domain)
+
+
 def _detect_platform(url: str) -> str:
     """Detect social platform from URL domain."""
     host = urlparse(url).netloc.lower()
-    if "twitter.com" in host or "x.com" in host:
+    # Drop credentials and any :port before comparing.
+    host = host.rpartition("@")[2].partition(":")[0]
+    if _host_matches(host, "twitter.com") or _host_matches(host, "x.com"):
         return "twitter"
-    if "github.com" in host:
+    if _host_matches(host, "github.com"):
         return "github"
     return "unknown"
 

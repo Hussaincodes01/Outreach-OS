@@ -55,7 +55,6 @@ def _ctx(api_keys: dict[str, str] | None = None) -> ToolContext:
         session=None,  # type: ignore[arg-type]
         tenant_id=uuid.uuid4(),
         lead_id=uuid.uuid4(),
-        llm=_ScriptedLLM([]),  # type: ignore[arg-type]
         api_keys=api_keys or {},
     )
 
