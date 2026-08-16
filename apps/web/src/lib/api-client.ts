@@ -60,6 +60,24 @@ export interface CredentialOut {
 
 /** A connectable LLM provider. Served by the API so the UI never hard-codes
  *  a list that can drift from the backend. */
+export interface ImportPreviewOut {
+  headers: string[];
+  sample_rows: Record<string, string>[];
+  suggested_mapping: Record<string, string>;
+  importable_fields: string[];
+  total_rows: number;
+  truncated: boolean;
+  max_rows: number;
+}
+
+export interface ImportResultOut {
+  imported: number;
+  duplicates: number;
+  skipped: number;
+  total_rows: number;
+  problems: { row_number: number; reason: string }[];
+}
+
 export interface ProviderOut {
   provider: string;
   credential_kind: string;
@@ -771,9 +789,52 @@ async function request<T>(
   return (await res.json()) as T;
 }
 
+/**
+ * Multipart POST for file uploads.
+ *
+ * Deliberately does NOT set Content-Type: the browser has to generate it
+ * itself so it can append the multipart boundary. Setting it by hand — as
+ * `request()` does for JSON — produces a body the server cannot parse.
+ */
+async function requestForm<T>(path: string, form: FormData): Promise<T> {
+  const res = await fetch(`${API_URL}${path}`, {
+    method: "POST",
+    body: form,
+    headers: { ...authHeader() },
+    cache: "no-store",
+  });
+  if (!res.ok) {
+    let detail = res.statusText;
+    try {
+      const body = (await res.json()) as { detail?: string };
+      if (body.detail) detail = body.detail;
+    } catch {
+      // body wasn't JSON
+    }
+    throw new ApiError(res.status, detail);
+  }
+  return (await res.json()) as T;
+}
+
 export const api = {
   setAccessToken(token: string | null) {
     inMemoryToken = token;
+  },
+
+  async previewLeadImport(file: File): Promise<ImportPreviewOut> {
+    const form = new FormData();
+    form.append("file", file);
+    return requestForm<ImportPreviewOut>("/v1/leads/import/preview", form);
+  },
+
+  async importLeads(
+    file: File,
+    mapping: Record<string, string>
+  ): Promise<ImportResultOut> {
+    const form = new FormData();
+    form.append("file", file);
+    form.append("mapping", JSON.stringify(mapping));
+    return requestForm<ImportResultOut>("/v1/leads/import", form);
   },
 
   async signup(input: SignupInput): Promise<TokenPair> {

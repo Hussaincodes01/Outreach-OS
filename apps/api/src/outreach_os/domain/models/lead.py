@@ -75,7 +75,11 @@ class Lead(Base):
             postgresql_where=text("email IS NOT NULL"),
         ),
         CheckConstraint(
-            "source IN ('serper', 'company_site', 'linkedin_proxycurl', 'social_profiles')",
+            # `csv_import` is deliberately absent from VALID_SOURCES: that tuple
+            # drives the per-tenant toggles for *scrapeable* sources, and an
+            # import is not something you schedule.
+            "source IN ('serper', 'company_site', 'linkedin_proxycurl', "
+            "'social_profiles', 'csv_import')",
             name="ck_lead_source",
         ),
     )

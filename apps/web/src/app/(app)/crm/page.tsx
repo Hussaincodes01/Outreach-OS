@@ -234,9 +234,14 @@ export default function CrmPage() {
         <div>
           <h1 className="text-2xl font-semibold tracking-tight">CRM sync</h1>
           <p className="text-muted-foreground">
-            Connect your CRM (Google Sheets in v1) to receive a new row for
-            every confirmed meeting. Each connection is tenant-scoped and
-            RLS-isolated.
+            Configure where confirmed meetings should be written. Each
+            connection is tenant-scoped and RLS-isolated.
+          </p>
+          <p className="mt-2 rounded-md border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-sm">
+            <strong>CRM delivery is not live yet.</strong> Connections, column
+            mapping and the sync log all work, and every sync is recorded — but
+            rows are not yet pushed to Google Sheets. Export from the sync log
+            in the meantime.
           </p>
         </div>
         <Button onClick={() => setCreateOpen(true)}>

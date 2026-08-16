@@ -104,12 +104,28 @@ async def add_security_headers(request: Request, call_next: _CallNext) -> Respon
     return response
 
 
-# Request size limit middleware (1MB default)
+# Request size limit middleware.
+#
+# JSON bodies stay small. Lead-list uploads are the one legitimate exception:
+# a few thousand rows of CSV easily exceeds 1MB, and a bare 413 on a customer's
+# first import is a terrible introduction to the product. The import endpoints
+# enforce their own row and byte ceilings (see services.lead_import).
+_DEFAULT_MAX_BODY = 1_000_000
+_UPLOAD_MAX_BODY = 10_000_000
+_UPLOAD_PATHS = ("/v1/leads/import",)
+
+
 @app.middleware("http")
 async def limit_body_size(request: Request, call_next: _CallNext) -> Response:
     content_length = request.headers.get("content-length")
-    if content_length and int(content_length) > 1_000_000:  # 1MB
-        return Response("Payload too large", status_code=413)
+    if content_length:
+        limit = (
+            _UPLOAD_MAX_BODY
+            if request.url.path.startswith(_UPLOAD_PATHS)
+            else _DEFAULT_MAX_BODY
+        )
+        if int(content_length) > limit:
+            return Response("Payload too large", status_code=413)
     return await call_next(request)
 
 

@@ -234,9 +234,13 @@ export default function MeetingsPage() {
       <div>
         <h1 className="text-2xl font-semibold tracking-tight">Meetings</h1>
         <p className="text-muted-foreground">
-          Proposed and confirmed meetings from positive replies. Confirm a
-          slot to create the calendar event (and trigger a CRM sync if
-          any connections are active).
+          Proposed and confirmed meetings from positive replies. Confirming a
+          slot records the meeting and generates a valid ICS invite.
+        </p>
+        <p className="mt-2 rounded-md border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-sm">
+          <strong>Calendar sync is not live yet.</strong> Meetings, slots and
+          ICS invites all work, but confirming does not yet write to Google
+          Calendar or Outlook — send the invite to the attendee yourself for now.
         </p>
       </div>
 

@@ -18,6 +18,7 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { Badge } from "@/components/ui/badge";
+import { LeadImportDialog } from "@/components/leads/import-dialog";
 import { formatDate } from "@/lib/utils";
 
 const SOURCES = [
@@ -62,12 +63,15 @@ export default function LeadsPage() {
 
   return (
     <div className="space-y-6">
-      <div>
-        <h1 className="text-2xl font-semibold tracking-tight">Leads</h1>
-        <p className="text-muted-foreground">
-          People harvested from your lead sources. Deduplicated by email — multiple contacts per
-          company are kept.
-        </p>
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div>
+          <h1 className="text-2xl font-semibold tracking-tight">Leads</h1>
+          <p className="text-muted-foreground">
+            Imported from your own list or harvested from your lead sources.
+            Deduplicated by email — multiple contacts per company are kept.
+          </p>
+        </div>
+        <LeadImportDialog />
       </div>
 
       <Card>
