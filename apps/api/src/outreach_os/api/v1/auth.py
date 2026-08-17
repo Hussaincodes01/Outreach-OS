@@ -1,7 +1,9 @@
 """Auth endpoints: signup, login, refresh, me."""
 from __future__ import annotations
 
+import asyncio
 import uuid
+from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from sqlalchemy import select
@@ -12,8 +14,13 @@ from outreach_os.core.audit import write_audit_event
 from outreach_os.core.auth import (
     TokenError,
     create_access_token,
+    create_email_verification_token,
+    create_password_reset_token,
     create_refresh_token,
+    decode_email_verification_token,
+    decode_password_reset_token,
     decode_token,
+    hash_password,
     verify_password,
 )
 from outreach_os.core.config import Settings
@@ -23,13 +30,17 @@ from outreach_os.domain.models.user import AppUser, UserRole
 from outreach_os.domain.schemas.auth import (
     AccessTokenResponse,
     AuthContext,
+    ForgotPasswordRequest,
     LoginRequest,
     RefreshRequest,
+    ResetPasswordRequest,
     SignupRequest,
+    SimpleMessage,
     TokenPair,
+    VerifyEmailRequest,
 )
 from outreach_os.domain.schemas.user import UserOut
-from outreach_os.services import tenant_service, user_service
+from outreach_os.services import account_email, tenant_service, user_service
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 
@@ -132,6 +143,17 @@ async def signup(
         payload={"tenant_slug": tenant.slug},
     )
 
+    # Best-effort: a mail outage must not block signup. The user lands in the
+    # app either way and can re-request the link from the banner.
+    verification = create_email_verification_token(
+        user_id=str(user.id), tenant_id=str(tenant.id), email=user.email
+    )
+    await asyncio.to_thread(
+        account_email.send_email_verification,
+        to_email=user.email,
+        token=verification,
+    )
+
     return TokenPair(
         access_token=access,
         refresh_token=refresh,
@@ -229,6 +251,181 @@ async def refresh(
     return AccessTokenResponse(
         access_token=access, expires_in=_settings().jwt_access_ttl_minutes * 60
     )
+
+
+@router.post(
+    "/forgot-password",
+    response_model=SimpleMessage,
+    status_code=status.HTTP_202_ACCEPTED,
+)
+async def forgot_password(
+    request: Request,
+    payload: ForgotPasswordRequest,
+    db: AsyncSession = Depends(get_db),
+) -> SimpleMessage:
+    """Email a password-reset link.
+
+    Always returns the same 202, whether or not the address exists. Anything
+    else turns this endpoint into an account-enumeration oracle: an attacker
+    could discover exactly who has an account by watching status codes or
+    response times.
+    """
+    decision = _rate_limit(request, "password_reset")
+    if not decision.allowed:
+        _raise_429(decision)
+
+    found = await user_service.lookup_user_by_email(db, payload.email)
+    if found is not None:
+        tenant_id, user_id, password_hash, _role = found
+        token = create_password_reset_token(
+            user_id=str(user_id),
+            tenant_id=str(tenant_id),
+            password_hash=password_hash,
+        )
+        await set_tenant_for_session(db, str(tenant_id))
+        await write_audit_event(
+            db,
+            action="user.password_reset_requested",
+            target_type="user",
+            target_id=user_id,
+            actor_kind="user",
+            actor_id=user_id,
+        )
+        # Off the event loop: SMTP is blocking and a slow relay would
+        # otherwise make "address exists" measurable by response time.
+        await asyncio.to_thread(
+            account_email.send_password_reset, to_email=payload.email, token=token
+        )
+
+    return SimpleMessage(
+        message="If that address has an account, a reset link is on its way."
+    )
+
+
+@router.post("/reset-password", response_model=SimpleMessage)
+async def reset_password(
+    request: Request,
+    payload: ResetPasswordRequest,
+    db: AsyncSession = Depends(get_db),
+) -> SimpleMessage:
+    """Set a new password using a reset token.
+
+    The token embeds a fingerprint of the current password hash, so completing
+    a reset invalidates the link — and any other outstanding links.
+    """
+    decision = _rate_limit(request, "password_reset")
+    if not decision.allowed:
+        _raise_429(decision)
+
+    try:
+        unverified = decode_token(payload.token, expected_type="password_reset")
+    except TokenError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)
+        ) from exc
+
+    tenant_id = uuid.UUID(str(unverified["tid"]))
+    user_id = uuid.UUID(str(unverified["sub"]))
+    await set_tenant_for_session(db, str(tenant_id))
+
+    user = await db.get(AppUser, user_id)
+    if user is None or not user.is_active:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST, detail="invalid reset link"
+        )
+
+    # Re-check against the stored hash: this is what enforces single use.
+    try:
+        decode_password_reset_token(payload.token, password_hash=user.password_hash)
+    except TokenError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)
+        ) from exc
+
+    user.password_hash = hash_password(payload.new_password)
+    await db.flush()
+    await write_audit_event(
+        db,
+        action="user.password_reset_completed",
+        target_type="user",
+        target_id=user.id,
+        actor_kind="user",
+        actor_id=user.id,
+    )
+    return SimpleMessage(message="Your password has been changed. You can sign in now.")
+
+
+@router.post("/verify-email", response_model=SimpleMessage)
+async def verify_email(
+    payload: VerifyEmailRequest,
+    db: AsyncSession = Depends(get_db),
+) -> SimpleMessage:
+    """Confirm an email address from a verification link."""
+    try:
+        unverified = decode_token(payload.token, expected_type="email_verify")
+    except TokenError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)
+        ) from exc
+
+    tenant_id = uuid.UUID(str(unverified["tid"]))
+    user_id = uuid.UUID(str(unverified["sub"]))
+    await set_tenant_for_session(db, str(tenant_id))
+
+    user = await db.get(AppUser, user_id)
+    if user is None:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST, detail="invalid verification link"
+        )
+    try:
+        decode_email_verification_token(payload.token, email=user.email)
+    except TokenError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)
+        ) from exc
+
+    if user.email_verified_at is None:
+        user.email_verified_at = datetime.now(timezone.utc)
+        await db.flush()
+        await write_audit_event(
+            db,
+            action="user.email_verified",
+            target_type="user",
+            target_id=user.id,
+            actor_kind="user",
+            actor_id=user.id,
+        )
+    return SimpleMessage(message="Email confirmed.")
+
+
+@router.post(
+    "/resend-verification",
+    response_model=SimpleMessage,
+    status_code=status.HTTP_202_ACCEPTED,
+)
+async def resend_verification(
+    request: Request,
+    user: AuthContext = Depends(get_current_user),
+    db: AsyncSession = Depends(get_scoped_db),
+) -> SimpleMessage:
+    """Re-send the confirmation link for the signed-in user."""
+    decision = _rate_limit(request, "password_reset")
+    if not decision.allowed:
+        _raise_429(decision)
+
+    row = await db.get(AppUser, user.user_id)
+    if row is None:
+        raise HTTPException(status_code=404, detail="user not found")
+    if row.email_verified_at is not None:
+        return SimpleMessage(message="That address is already confirmed.")
+
+    token = create_email_verification_token(
+        user_id=str(row.id), tenant_id=str(row.tenant_id), email=row.email
+    )
+    await asyncio.to_thread(
+        account_email.send_email_verification, to_email=row.email, token=token
+    )
+    return SimpleMessage(message="Confirmation email sent.")
 
 
 @router.get("/me", response_model=UserOut)

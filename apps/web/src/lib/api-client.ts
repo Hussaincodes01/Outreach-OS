@@ -36,6 +36,8 @@ export interface UserOut {
   role: string;
   is_active: boolean;
   created_at: string;
+  /** Null until the address is confirmed. Access is never gated on this. */
+  email_verified_at: string | null;
 }
 
 export interface TenantOut {
@@ -821,6 +823,31 @@ export const api = {
     inMemoryToken = token;
   },
 
+  async forgotPassword(email: string): Promise<{ message: string }> {
+    return request("/v1/auth/forgot-password", {
+      method: "POST",
+      body: JSON.stringify({ email }),
+    });
+  },
+
+  async resetPassword(token: string, newPassword: string): Promise<{ message: string }> {
+    return request("/v1/auth/reset-password", {
+      method: "POST",
+      body: JSON.stringify({ token, new_password: newPassword }),
+    });
+  },
+
+  async verifyEmail(token: string): Promise<{ message: string }> {
+    return request("/v1/auth/verify-email", {
+      method: "POST",
+      body: JSON.stringify({ token }),
+    });
+  },
+
+  async resendVerification(): Promise<{ message: string }> {
+    return request("/v1/auth/resend-verification", { method: "POST" });
+  },
+
   async previewLeadImport(file: File): Promise<ImportPreviewOut> {
     const form = new FormData();
     form.append("file", file);
@@ -863,10 +890,16 @@ export const api = {
     });
   },
 
-  me(token: string): Promise<UserOut> {
-    return request<UserOut>("/v1/auth/me", {
-      headers: { Authorization: `Bearer ${token}` },
-    });
+  /**
+   * `token` is optional: once the auth bridge has run, `request()` already
+   * attaches the in-memory token. Callers during sign-in, before the bridge
+   * is wired, pass it explicitly.
+   */
+  me(token?: string): Promise<UserOut> {
+    return request<UserOut>(
+      "/v1/auth/me",
+      token ? { headers: { Authorization: `Bearer ${token}` } } : {}
+    );
   },
 
   // -- tenant --

@@ -8,6 +8,7 @@ For multi-issuer setups, swap to RS256 + JWKS.
 """
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
 import secrets
@@ -154,3 +155,60 @@ def decode_token(token: str, *, expected_type: str) -> dict[str, Any]:
 
 def generate_csrf_token() -> str:
     return secrets.token_urlsafe(32)
+
+
+# --- Single-purpose action tokens ------------------------------------------
+
+
+def _password_fingerprint(password_hash: str) -> str:
+    """Short digest of the stored hash, embedded in reset tokens.
+
+    This is what makes a reset link single-use without a database table:
+    completing a reset changes the password hash, so the fingerprint no longer
+    matches and the same link cannot be replayed. It also invalidates
+    outstanding links whenever the password changes by any route.
+
+    The hash itself is never exposed — only a truncated SHA-256 of it.
+    """
+    return hashlib.sha256(password_hash.encode("utf-8")).hexdigest()[:16]
+
+
+def create_password_reset_token(
+    *, user_id: str, tenant_id: str, password_hash: str
+) -> str:
+    settings = get_settings()
+    return _build_token(
+        sub=user_id,
+        tenant_id=tenant_id,
+        token_type="password_reset",
+        ttl=timedelta(minutes=settings.password_reset_ttl_minutes),
+        extra={"pfp": _password_fingerprint(password_hash)},
+    )
+
+
+def decode_password_reset_token(token: str, *, password_hash: str) -> dict[str, Any]:
+    """Decode a reset token and reject it if the password already changed."""
+    claims = decode_token(token, expected_type="password_reset")
+    if claims.get("pfp") != _password_fingerprint(password_hash):
+        raise TokenError("this reset link has already been used or has expired")
+    return claims
+
+
+def create_email_verification_token(*, user_id: str, tenant_id: str, email: str) -> str:
+    settings = get_settings()
+    return _build_token(
+        sub=user_id,
+        tenant_id=tenant_id,
+        token_type="email_verify",
+        ttl=timedelta(hours=settings.email_verification_ttl_hours),
+        # Binding the address stops a link issued for one email from verifying
+        # a different one after an address change.
+        extra={"eml": email.lower()},
+    )
+
+
+def decode_email_verification_token(token: str, *, email: str) -> dict[str, Any]:
+    claims = decode_token(token, expected_type="email_verify")
+    if str(claims.get("eml", "")).lower() != email.lower():
+        raise TokenError("this verification link was issued for a different address")
+    return claims

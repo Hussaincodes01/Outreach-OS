@@ -33,7 +33,14 @@ os.environ.setdefault("CELERY_RESULT_BACKEND", "redis://localhost:6379/15")
 # Run Celery tasks synchronously in-process so tests don't need a worker.
 os.environ.setdefault("CELERY_TASK_ALWAYS_EAGER", "true")
 # Disable auth rate limits in tests (or set very high)
-os.environ.setdefault("AUTH_RATE_LIMITS_PER_MINUTE", '{"login": 10000, "signup": 10000, "refresh": 10000, "webhook": 10000}')
+# Every test shares one client IP, so production limits would make the suite
+# fail on volume rather than behaviour. `password_reset` is included because it
+# defaults to a deliberately tight 3/min.
+os.environ.setdefault(
+    "AUTH_RATE_LIMITS_PER_MINUTE",
+    '{"login": 10000, "signup": 10000, "refresh": 10000, "webhook": 10000,'
+    ' "password_reset": 10000}',
+)
 # Set inbound webhook secret for tests
 os.environ.setdefault("INBOUND_WEBHOOK_SECRET", "test-webhook-secret")
 

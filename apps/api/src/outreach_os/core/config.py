@@ -103,11 +103,25 @@ class Settings(BaseSettings):
     s3_region: str = "us-east-1"
 
     # --- SMTP (transactional, e.g. magic-link login) ---
-    smtp_host: str = "localhost"
+    # Transactional SMTP (password resets, verification, digests). Empty host
+    # means "no mail configured": the mailer falls back to logging instead of
+    # failing every send against a server that isn't there. Deliberately NOT
+    # defaulted to localhost — that would make the test suite open sockets and
+    # would hide a misconfigured deployment behind connection errors.
+    smtp_host: str = ""
     smtp_port: int = 1025
     smtp_username: str = ""
     smtp_password: SecretStr = SecretStr("")
     smtp_use_tls: bool = False
+    # From address on platform email. Must be a domain you control, or resets
+    # land in spam.
+    transactional_from_email: str = "no-reply@outreach-os.local"
+    # Public URL of the WEB app (not the API). Reset and verification links
+    # point here, so it has to be where the user's browser can reach the UI.
+    web_base_url: str = "http://localhost:3000"
+    # Lifetime of password-reset and email-verification links.
+    password_reset_ttl_minutes: int = 60
+    email_verification_ttl_hours: int = 48
 
     # --- Phase 2: Lead scraping ---
     # Per-tenant, per-source rate limits (requests per minute). Source names

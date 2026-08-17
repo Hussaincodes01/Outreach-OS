@@ -27,6 +27,10 @@ AUTH_DEFAULTS: Final[dict[str, int]] = {
     "signup": 5,        # 5 signups per minute per IP
     "refresh": 30,      # 30 refreshes per minute per IP
     "webhook": 100,     # 100 webhook calls per minute per IP
+    # Deliberately tight: this endpoint sends mail to an address the caller
+    # supplies, so a loose limit turns it into a way to spam a third party
+    # from our domain and burn our sending reputation.
+    "password_reset": 3,
 }
 
 

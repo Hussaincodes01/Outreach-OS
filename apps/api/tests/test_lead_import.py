@@ -100,7 +100,7 @@ async def test_invalid_rows_are_reported_with_line_numbers_not_dropped() -> None
 
 async def test_mapping_without_email_or_domain_is_refused() -> None:
     """A lead with neither can be neither contacted nor enriched."""
-    with pytest.raises(LeadImportError, match="email.*or.*domain"):
+    with pytest.raises(LeadImportError, match=r"email.*or.*domain"):
         lead_import.parse(_CSV.encode("utf-8"), {"Company": "company_name"})
 
 

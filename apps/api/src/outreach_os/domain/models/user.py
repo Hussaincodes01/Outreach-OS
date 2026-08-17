@@ -35,6 +35,12 @@ class AppUser(Base):
     password_hash: Mapped[str] = mapped_column(Text, nullable=False)
     role: Mapped[str] = mapped_column(Text, nullable=False, server_default="member")
     is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default="true")
+    # NULL until the user clicks the verification link. Not enforced at login —
+    # locking people out of a workspace they are already paying for, because a
+    # verification email landed in spam, loses customers.
+    email_verified_at: Mapped[datetime | None] = mapped_column(
+        TIMESTAMP(timezone=True), nullable=True
+    )
     created_at: Mapped[datetime] = mapped_column(
         TIMESTAMP(timezone=True), nullable=False, server_default="now()"
     )

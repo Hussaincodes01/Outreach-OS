@@ -45,6 +45,26 @@ class AccessTokenResponse(ApiModel):
     expires_in: int
 
 
+class ForgotPasswordRequest(ApiModel):
+    email: EmailStr
+
+
+class ResetPasswordRequest(ApiModel):
+    token: str = Field(min_length=1)
+    # Same floor as signup; a reset must not be a way to weaken a password.
+    new_password: str = Field(min_length=12, max_length=200)
+
+
+class VerifyEmailRequest(ApiModel):
+    token: str = Field(min_length=1)
+
+
+class SimpleMessage(ApiModel):
+    """Deliberately uninformative for account-enumeration-sensitive endpoints."""
+
+    message: str
+
+
 class AuthContext(ApiModel):
     user_id: uuid.UUID
     tenant_id: uuid.UUID

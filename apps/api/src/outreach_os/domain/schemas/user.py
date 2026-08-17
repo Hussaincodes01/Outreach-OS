@@ -15,6 +15,9 @@ class UserOut(ApiModel):
     role: str
     is_active: bool
     created_at: datetime
+    # NULL until confirmed. Surfaced so the app can prompt without a second
+    # round-trip; access is never gated on it.
+    email_verified_at: datetime | None = None
 
 
 class UserInvite(ApiModel):

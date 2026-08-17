@@ -1,4 +1,5 @@
 import { Sidebar } from "@/components/nav/sidebar";
+import { VerifyEmailBanner } from "@/components/account/verify-email-banner";
 
 export default function AppLayout({
   children,
@@ -8,7 +9,10 @@ export default function AppLayout({
   return (
     <div className="flex min-h-screen">
       <Sidebar />
-      <main className="flex-1 overflow-y-auto p-8">{children}</main>
+      <div className="flex min-w-0 flex-1 flex-col">
+        <VerifyEmailBanner />
+        <main className="flex-1 overflow-y-auto p-8">{children}</main>
+      </div>
     </div>
   );
 }
