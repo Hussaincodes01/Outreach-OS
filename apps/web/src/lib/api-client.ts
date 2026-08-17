@@ -99,6 +99,7 @@ export interface ProviderOut {
   requires_api_key: boolean;
   api_base_hint: string | null;
   model_count: number;
+  allows_custom_model: boolean;
 }
 
 export interface OnboardingStepOut {
@@ -147,6 +148,8 @@ export interface LlmSettingsOut {
   available_models: string[];
   models: ModelOut[];
   embedding_models: EmbeddingModelOut[];
+  /** Connected providers whose models can't be enumerated (Poolside, vLLM…). */
+  custom_model_providers: string[];
 }
 
 export interface MailboxOut {

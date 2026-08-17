@@ -43,6 +43,9 @@ class ProviderOut(ApiModel):
     requires_api_key: bool = True
     api_base_hint: str | None = None
     model_count: int = 0
+    # True when the model list can't be enumerated ahead of time (a gateway or
+    # self-hosted endpoint), so the UI must accept a typed model name.
+    allows_custom_model: bool = False
 
 
 class CredentialOut(ApiModel):

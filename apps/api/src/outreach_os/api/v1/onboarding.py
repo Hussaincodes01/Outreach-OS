@@ -110,6 +110,11 @@ async def _settings_payload(db: AsyncSession, tenant: Tenant) -> LlmSettingsOut:
             for p in PROVIDERS
             for m in p.models
         ],
+        custom_model_providers=[
+            p.provider
+            for p in PROVIDERS
+            if p.allows_custom_model and p.provider in connected
+        ],
         embedding_models=[
             EmbeddingModelOut(
                 id=e.id,

@@ -65,6 +65,9 @@ class LlmSettingsOut(ApiModel):
     available_models: list[str] = Field(default_factory=list)
     models: list[ModelOut] = Field(default_factory=list)
     embedding_models: list[EmbeddingModelOut] = Field(default_factory=list)
+    # Providers whose model list can't be enumerated, so the UI must let the
+    # user type a model name (e.g. a Poolside or vLLM endpoint).
+    custom_model_providers: list[str] = Field(default_factory=list)
 
 
 class LlmSettingsIn(ApiModel):

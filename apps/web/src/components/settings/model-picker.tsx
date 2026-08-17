@@ -69,6 +69,11 @@ export function ModelPicker() {
   );
   const embeddings = settings.data?.embedding_models ?? [];
   const anyAvailable = models.some((m) => m.available);
+  const customProviders = settings.data?.custom_model_providers ?? [];
+  // A gateway or self-hosted endpoint serves whatever its operator deployed,
+  // so the catalogue can only suggest — the user must be able to type a name.
+  const canTypeModel = customProviders.length > 0;
+  const isCustom = Boolean(chat) && !models.some((m) => m.id === chat);
 
   /** Group by provider so a long catalogue stays scannable. */
   const grouped = useMemo(() => {
@@ -124,6 +129,24 @@ export function ModelPicker() {
               </optgroup>
             ))}
           </select>
+          {canTypeModel && (
+            <div className="space-y-1 pt-2">
+              <Label htmlFor="custom-model" className="text-xs font-normal">
+                …or type a model your endpoint serves
+              </Label>
+              <input
+                id="custom-model"
+                className="flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-sm shadow-sm"
+                placeholder={`${customProviders[0]}/your-model-name`}
+                value={isCustom ? chat : ""}
+                onChange={(e) => setChat(e.target.value.trim())}
+              />
+              <p className="text-xs text-muted-foreground">
+                Must start with a connected provider, e.g.{" "}
+                <code>{customProviders[0]}/malibu</code>.
+              </p>
+            </div>
+          )}
           {selected && (
             <div className="flex flex-wrap items-center gap-2 pt-1">
               <Badge variant="outline" className="text-xs">

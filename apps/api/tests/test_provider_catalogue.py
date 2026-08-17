@@ -36,7 +36,29 @@ def test_every_catalogue_model_routes_to_its_own_provider() -> None:
 
 def test_verify_model_belongs_to_its_provider() -> None:
     for provider in PROVIDERS:
+        if provider.verify_model is None:
+            # A gateway endpoint serves whatever its operator deployed, so
+            # there is no model name safe to probe with.
+            assert provider.allows_custom_model, provider.provider
+            continue
         assert provider_for_model(provider.verify_model) == provider.provider
+
+
+def test_openai_compatible_endpoint_is_offered() -> None:
+    """Covers Poolside, vLLM, LM Studio and private gateways in one provider
+    rather than a new entry per vendor."""
+    spec = next(p for p in PROVIDERS if p.provider == "openai_like")
+    assert spec.requires_api_base is True
+    assert spec.allows_custom_model is True
+    assert spec.verify_model is None
+    assert spec.api_base_hint
+
+
+def test_arbitrary_model_on_a_compatible_endpoint_routes(client) -> None:
+    """The whole point: a model we have never heard of must still resolve to
+    the right provider, so a new endpoint works without a code change."""
+    assert provider_for_model("openai_like/malibu") == "openai_like"
+    assert provider_for_model("openai_like/some-private-build-2031") == "openai_like"
 
 
 def test_provider_identifiers_are_unique() -> None:
@@ -361,6 +383,96 @@ async def test_credential_saved_under_token_is_usable(client) -> None:
         headers=headers,
     )
     assert resp.status_code == 200, resp.text
+
+
+@pytest.mark.asyncio
+async def test_compatible_endpoint_connects_and_accepts_a_custom_model(client) -> None:
+    """End to end: connect a Poolside-style endpoint, then select a model that
+    exists in no catalogue."""
+    a = await signup(
+        client,
+        email=unique_email(),
+        password="correct-horse-battery-staple",
+        tenant_name="Compat Co",
+    )
+    headers = bearer(a["access_token"])
+    resp = await client.post(
+        "/v1/credentials",
+        json={
+            "kind": "llm_openai_compatible",
+            "label": "poolside",
+            "secret_payload": {
+                "api_key": "sk-poolside-test",
+                "api_base": "https://api.poolside.ai/v1",
+            },
+        },
+        headers=headers,
+    )
+    assert resp.status_code == 201, resp.text
+
+    settings = (await client.get("/v1/onboarding/llm-settings", headers=headers)).json()
+    assert "openai_like" in settings["custom_model_providers"]
+
+    resp = await client.put(
+        "/v1/onboarding/llm-settings",
+        json={"default_llm_model": "openai_like/malibu"},
+        headers=headers,
+    )
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["default_llm_model"] == "openai_like/malibu"
+
+
+@pytest.mark.asyncio
+async def test_compatible_endpoint_requires_a_base_url(client) -> None:
+    a = await signup(
+        client,
+        email=unique_email(),
+        password="correct-horse-battery-staple",
+        tenant_name="NoBase Co",
+    )
+    resp = await client.post(
+        "/v1/credentials",
+        json={
+            "kind": "llm_openai_compatible",
+            "label": "x",
+            "secret_payload": {"api_key": "sk-test"},
+        },
+        headers=bearer(a["access_token"]),
+    )
+    assert resp.status_code == 422
+    assert "api_base" in resp.json()["detail"]
+
+
+@pytest.mark.asyncio
+async def test_test_button_does_not_claim_a_live_check_it_cannot_make(client) -> None:
+    """No model name is universal for a gateway, so Test must report what it
+    actually did rather than implying the endpoint answered."""
+    a = await signup(
+        client,
+        email=unique_email(),
+        password="correct-horse-battery-staple",
+        tenant_name="Honest Co",
+    )
+    headers = bearer(a["access_token"])
+    cred = (
+        await client.post(
+            "/v1/credentials",
+            json={
+                "kind": "llm_openai_compatible",
+                "label": "gw",
+                "secret_payload": {
+                    "api_key": "sk-test",
+                    "api_base": "https://gateway.example/v1",
+                },
+            },
+            headers=headers,
+        )
+    ).json()
+    resp = await client.post(f"/v1/credentials/{cred['id']}/test", headers=headers)
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["ok"] is True
+    assert body["verified_live"] is False
 
 
 @pytest.mark.asyncio

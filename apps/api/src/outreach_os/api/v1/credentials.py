@@ -184,10 +184,14 @@ async def test_credential(
     ok, message = await verify_credentials(
         db, tenant_id=user.tenant_id, provider=spec.provider, credential=cred
     )
-    if ok:
+    # Only a provider we can probe yields a live result. For a gateway endpoint
+    # there is no universal model to call, so saying "verified" would claim
+    # more than we did.
+    live = spec.verify_model is not None
+    if ok and live:
         cred.last_verified_at = datetime.now(timezone.utc)
         await db.flush()
-    return CredentialTestResult(ok=ok, message=message, verified_live=True)
+    return CredentialTestResult(ok=ok, message=message, verified_live=live)
 
 
 @router.get("/providers", response_model=list[ProviderOut])
@@ -220,6 +224,7 @@ async def list_providers(
             requires_api_key=p.requires_api_key,
             api_base_hint=p.api_base_hint,
             model_count=len(p.models),
+            allows_custom_model=p.allows_custom_model,
         )
         for p in PROVIDERS
     ]

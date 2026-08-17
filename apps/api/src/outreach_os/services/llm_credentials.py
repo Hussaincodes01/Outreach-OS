@@ -79,8 +79,11 @@ class ProviderSpec:
     label: str
     # Shown in the UI so a user knows where to get the key.
     console_url: str
-    # A cheap model used to verify the key actually works.
-    verify_model: str
+    # A cheap model used to verify the key actually works. None for providers
+    # where no model name is universal (a self-hosted or gateway endpoint
+    # serves whatever its operator deployed), in which case Test can only
+    # confirm the credential is stored and decryptable.
+    verify_model: str | None
     models: tuple[ModelSpec, ...] = ()
     embedding_models: tuple[EmbeddingModelSpec, ...] = ()
     # Self-hosted / gateway providers need a base URL instead of (or as well
@@ -89,6 +92,9 @@ class ProviderSpec:
     requires_api_key: bool = True
     api_base_hint: str | None = None
     description: str = ""
+    # True when the model list cannot be enumerated ahead of time, so the UI
+    # must let the user type a model name instead of only picking one.
+    allows_custom_model: bool = False
 
     @property
     def supports_embeddings(self) -> bool:
@@ -316,6 +322,31 @@ PROVIDERS: tuple[ProviderSpec, ...] = (
         models=(
             ModelSpec("perplexity/sonar", "Sonar", supports_tools=False, tier="fast"),
             ModelSpec("perplexity/sonar-pro", "Sonar Pro", supports_tools=False),
+        ),
+    ),
+    ProviderSpec(
+        provider="openai_like",
+        credential_kind="llm_openai_compatible",
+        label="OpenAI-compatible endpoint",
+        console_url="https://poolside.ai",
+        # No universal model name: this endpoint serves whatever its operator
+        # deployed, so there is nothing safe to probe with.
+        verify_model=None,
+        requires_api_base=True,
+        api_base_hint="https://api.poolside.ai/v1",
+        allows_custom_model=True,
+        description=(
+            "Any provider exposing an OpenAI-compatible API — Poolside, vLLM, "
+            "LM Studio, Anyscale, or your own gateway. Set the base URL, then "
+            "enter the model name your endpoint serves as "
+            "'openai_like/<model>'."
+        ),
+        models=(
+            ModelSpec(
+                "openai_like/malibu",
+                "Poolside malibu",
+                context_window=128_000,
+            ),
         ),
     ),
     ProviderSpec(
@@ -555,6 +586,15 @@ async def verify_credentials(
         creds = await load_credentials(session, tenant_id=tenant_id, provider=provider)
     if creds is None:
         return False, "no usable API key stored for this provider"
+
+    if spec.verify_model is None:
+        # Nothing safe to probe with — the endpoint serves whatever its
+        # operator deployed. Say exactly that rather than implying a live
+        # check we did not perform.
+        return True, (
+            f"Stored for {creds.api_base or spec.label}. "
+            "Generate a draft to confirm the endpoint and model work."
+        )
 
     client = LiteLLMClient(creds)
     try:
