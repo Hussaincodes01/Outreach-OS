@@ -30,6 +30,11 @@ interface AuthState {
   }) => Promise<void>;
   signOut: () => void;
   refresh: () => Promise<void>;
+  /**
+   * Adopt a session minted elsewhere — currently the social sign-in callback,
+   * which receives tokens from the API rather than exchanging credentials here.
+   */
+  adoptSession: (accessToken: string, refreshToken: string) => Promise<void>;
 }
 
 const AuthContext = createContext<AuthState | null>(null);
@@ -113,6 +118,19 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     [persistAndSet]
   );
 
+  const adoptSession = useCallback(
+    async (access: string, refresh: string) => {
+      api.setAccessToken(access);
+      const me = await api.me(access);
+      persistAndSet({
+        accessToken: access,
+        refreshToken: refresh,
+        user: { id: me.id, email: me.email, role: me.role },
+      });
+    },
+    [persistAndSet]
+  );
+
   const signUp = useCallback(
     async (input: {
       email: string;
@@ -161,8 +179,19 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       signUp,
       signOut,
       refresh,
+      adoptSession,
     }),
-    [user, accessToken, refreshToken, loading, signIn, signUp, signOut, refresh]
+    [
+      user,
+      accessToken,
+      refreshToken,
+      loading,
+      signIn,
+      signUp,
+      signOut,
+      refresh,
+      adoptSession,
+    ]
   );
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;

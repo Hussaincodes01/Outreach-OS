@@ -12,6 +12,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { SocialButtons } from "@/components/auth/social-buttons";
 
 const schema = z.object({
   tenantName: z.string().min(1, "workspace name is required").max(200),
@@ -68,6 +69,11 @@ export default function SignupPage() {
         </CardDescription>
       </CardHeader>
       <CardContent>
+        <div className="mb-4">
+          {/* Social signup skips the form entirely — we get a verified address
+              and provision the workspace from the sign-in callback. */}
+          <SocialButtons action="Sign up" />
+        </div>
         <form onSubmit={handleSubmit(onSubmit)} className="space-y-4">
           <div className="space-y-1.5">
             <Label htmlFor="tenantName">Workspace name</Label>

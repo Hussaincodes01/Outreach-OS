@@ -25,7 +25,7 @@ from fastapi.responses import RedirectResponse
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from outreach_os.api.deps import AuthContext, get_current_user, get_scoped_db
+from outreach_os.api.deps import AuthContext, get_current_user, get_db, get_scoped_db
 from outreach_os.core.billing_client import get_billing_client
 from outreach_os.core.config import get_settings
 from outreach_os.core.db import session_scope
@@ -52,6 +52,18 @@ router = APIRouter(prefix="/billing", tags=["billing"])
 
 
 # ---------- public plans ----------
+
+
+@router.get("/plans/public", response_model=PlanListOut)
+async def list_plans_public(db: AsyncSession = Depends(get_db)) -> PlanListOut:
+    """Plan definitions, without authentication.
+
+    The marketing page needs these before anyone has an account, and pricing
+    is not secret. Safe to serve unscoped: `plan` is one of the few tables
+    with no RLS policy because it holds no tenant data.
+    """
+    plans = await billing_service.list_plans(db)
+    return PlanListOut(items=[PlanOut.model_validate(p) for p in plans])
 
 
 @router.get("/plans", response_model=PlanListOut)

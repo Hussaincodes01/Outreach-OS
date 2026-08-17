@@ -62,6 +62,11 @@ export interface CredentialOut {
 
 /** A connectable LLM provider. Served by the API so the UI never hard-codes
  *  a list that can drift from the backend. */
+export interface SocialProviderOut {
+  provider: string;
+  label: string;
+}
+
 export interface ImportPreviewOut {
   headers: string[];
   sample_rows: Record<string, string>[];
@@ -823,6 +828,15 @@ export const api = {
     inMemoryToken = token;
   },
 
+  async socialProviders(): Promise<SocialProviderOut[]> {
+    return request<SocialProviderOut[]>("/v1/auth/oauth/providers");
+  },
+
+  /** Full-page navigation: the provider's consent screen can't run in a fetch. */
+  socialLoginUrl(provider: string): string {
+    return `${API_URL}/v1/auth/oauth/${provider}/start`;
+  },
+
   async forgotPassword(email: string): Promise<{ message: string }> {
     return request("/v1/auth/forgot-password", {
       method: "POST",
@@ -1080,6 +1094,11 @@ export const api = {
   // -- Billing --
   async listPlans(): Promise<PlanListOut> {
     return request<PlanListOut>("/v1/billing/plans");
+  },
+
+  /** Pricing for the marketing page — no account required. */
+  async listPublicPlans(): Promise<PlanListOut> {
+    return request<PlanListOut>("/v1/billing/plans/public");
   },
   async getSubscription(): Promise<SubscriptionOut | null> {
     return request<SubscriptionOut | null>("/v1/billing/subscription");

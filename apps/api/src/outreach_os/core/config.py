@@ -88,6 +88,16 @@ class Settings(BaseSettings):
         "http://localhost:8000/v1/mailboxes/oauth/outlook/callback"
     )
     microsoft_oauth_tenant: str = "common"
+    # Separate redirect URIs for SIGN-IN, distinct from the mailbox-connection
+    # callbacks above. Signing in requests identity scopes only; connecting a
+    # mailbox requests send/read. Keeping the callbacks apart means an
+    # authorization code minted for one flow cannot satisfy the other.
+    google_login_redirect_uri: str = (
+        "http://localhost:8000/v1/auth/oauth/google/callback"
+    )
+    microsoft_login_redirect_uri: str = (
+        "http://localhost:8000/v1/auth/oauth/microsoft/callback"
+    )
     microsoft_oauth_scopes: str = (
         "offline_access "
         "https://graph.microsoft.com/Mail.Send "

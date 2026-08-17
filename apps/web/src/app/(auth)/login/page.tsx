@@ -12,6 +12,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { SocialButtons } from "@/components/auth/social-buttons";
 
 const schema = z.object({
   email: z.string().email(),
@@ -50,6 +51,9 @@ export default function LoginPage() {
         <CardDescription>Enter your email and password.</CardDescription>
       </CardHeader>
       <CardContent>
+        <div className="mb-4">
+          <SocialButtons action="Sign in" />
+        </div>
         <form onSubmit={handleSubmit(onSubmit)} className="space-y-4">
           <div className="space-y-1.5">
             <Label htmlFor="email">Email</Label>

@@ -4,8 +4,10 @@ from __future__ import annotations
 import asyncio
 import uuid
 from datetime import datetime, timezone
+from urllib.parse import quote, urlencode
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
+from fastapi.responses import RedirectResponse
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -24,6 +26,7 @@ from outreach_os.core.auth import (
     verify_password,
 )
 from outreach_os.core.config import Settings
+from outreach_os.core.errors import AuthError, OAuthError
 from outreach_os.core.rate_limit import RateLimitDecision, check_and_consume_ip
 from outreach_os.core.tenancy import set_tenant_for_session
 from outreach_os.domain.models.user import AppUser, UserRole
@@ -36,11 +39,18 @@ from outreach_os.domain.schemas.auth import (
     ResetPasswordRequest,
     SignupRequest,
     SimpleMessage,
+    SocialProviderOut,
     TokenPair,
     VerifyEmailRequest,
 )
 from outreach_os.domain.schemas.user import UserOut
-from outreach_os.services import account_email, tenant_service, user_service
+from outreach_os.services import (
+    account_email,
+    social_auth,
+    social_login_service,
+    tenant_service,
+    user_service,
+)
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 
@@ -250,6 +260,98 @@ async def refresh(
     )
     return AccessTokenResponse(
         access_token=access, expires_in=_settings().jwt_access_ttl_minutes * 60
+    )
+
+
+@router.get("/oauth/providers", response_model=list[SocialProviderOut])
+async def list_social_providers() -> list[SocialProviderOut]:
+    """Sign-in providers this deployment has credentials for.
+
+    The login page reads this so it never renders a button that would fail:
+    an operator who hasn't configured Microsoft shouldn't advertise it.
+    """
+    return [SocialProviderOut(**p) for p in social_auth.configured_providers()]
+
+
+@router.get("/oauth/{provider}/start")
+async def start_social_login(provider: str, request: Request) -> RedirectResponse:
+    """Begin sign-in by redirecting to the provider's consent screen."""
+    decision = _rate_limit(request, "login")
+    if not decision.allowed:
+        _raise_429(decision)
+    try:
+        social_auth.get_provider(provider)
+        state = social_auth.build_state(provider=provider)
+        url = social_auth.build_authorize_url(provider, state)
+    except OAuthError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)
+        ) from exc
+    return RedirectResponse(url, status_code=status.HTTP_307_TEMPORARY_REDIRECT)
+
+
+@router.get("/oauth/{provider}/callback")
+async def social_login_callback(
+    provider: str,
+    request: Request,
+    code: str | None = None,
+    state: str | None = None,
+    error: str | None = None,
+    db: AsyncSession = Depends(get_db),
+) -> RedirectResponse:
+    """Provider redirects here. Ends with the browser back on the web app.
+
+    Tokens are handed over in the URL *fragment*, which browsers never send to
+    a server and which therefore stays out of access logs, proxy logs and the
+    Referer header — unlike a query string.
+    """
+    settings = _settings()
+    web = settings.web_base_url.rstrip("/")
+
+    def _fail(message: str) -> RedirectResponse:
+        return RedirectResponse(
+            f"{web}/login?error={quote(message)}",
+            status_code=status.HTTP_307_TEMPORARY_REDIRECT,
+        )
+
+    if error:
+        # User pressed "cancel" on the consent screen; not an error worth a 500.
+        return _fail("Sign-in was cancelled.")
+    if not code or not state:
+        return _fail("Sign-in response was incomplete. Please try again.")
+
+    try:
+        social_auth.verify_state(state, provider=provider)
+        identity = await social_auth.exchange_and_identify(provider, code)
+    except OAuthError as exc:
+        return _fail(str(exc))
+
+    try:
+        user, created = await social_login_service.sign_in_or_provision(db, identity)
+    except AuthError as exc:
+        return _fail(str(exc))
+
+    access = create_access_token(
+        user_id=str(user.id), tenant_id=str(user.tenant_id), role=user.role
+    )
+    refresh_token_value = create_refresh_token(
+        user_id=str(user.id), tenant_id=str(user.tenant_id), role=user.role
+    )
+    await write_audit_event(
+        db,
+        action="user.login",
+        target_type="user",
+        target_id=user.id,
+        actor_kind="user",
+        actor_id=user.id,
+        payload={"provider": provider, "new_account": created},
+    )
+    fragment = urlencode(
+        {"access_token": access, "refresh_token": refresh_token_value}
+    )
+    return RedirectResponse(
+        f"{web}/oauth/callback#{fragment}",
+        status_code=status.HTTP_307_TEMPORARY_REDIRECT,
     )
 
 

@@ -41,6 +41,14 @@ class AppUser(Base):
     email_verified_at: Mapped[datetime | None] = mapped_column(
         TIMESTAMP(timezone=True), nullable=True
     )
+    # 'password' | 'google' | 'microsoft'. SSO users still carry an (unusable)
+    # password_hash so no code path can treat a missing hash as a match.
+    auth_provider: Mapped[str] = mapped_column(
+        Text, nullable=False, server_default="password"
+    )
+    # The provider's stable subject id. Matched on instead of email, because
+    # an address can be reassigned to a different person inside a company.
+    auth_subject: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         TIMESTAMP(timezone=True), nullable=False, server_default="now()"
     )

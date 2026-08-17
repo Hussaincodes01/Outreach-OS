@@ -65,6 +65,13 @@ class SimpleMessage(ApiModel):
     message: str
 
 
+class SocialProviderOut(ApiModel):
+    """A sign-in provider this deployment has credentials for."""
+
+    provider: str
+    label: str
+
+
 class AuthContext(ApiModel):
     user_id: uuid.UUID
     tenant_id: uuid.UUID
