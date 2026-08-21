@@ -11,6 +11,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
 from outreach_os.api.v1 import (
+    admin,
     audit,
     auth,
     billing,
@@ -204,6 +205,7 @@ app.include_router(notification_preferences.router, prefix="/v1")
 app.include_router(slack_webhooks.router, prefix="/v1")
 # Phase 7 — billing
 app.include_router(billing.router, prefix="/v1")
+app.include_router(admin.router, prefix="/v1")
 # GDPR
 app.include_router(gdpr.router, prefix="/v1")
 # Public tracking endpoints (no /v1 prefix)

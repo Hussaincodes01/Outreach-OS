@@ -23,6 +23,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from outreach_os.core.auth import TokenError, decode_token
 from outreach_os.core.db import get_session_factory
 from outreach_os.core.tenancy import set_tenant_for_session
+from outreach_os.domain.models.user import AppUser
 from outreach_os.domain.schemas.auth import AuthContext
 
 
@@ -91,4 +92,49 @@ async def get_scoped_db(
         yield session
 
 
-__all__ = ["AuthContext", "get_current_user", "get_db", "get_scoped_db"]
+async def require_platform_admin(
+    user: AuthContext = Depends(get_current_user),
+) -> AuthContext:
+    """Gate for the operator's own console.
+
+    Checks the database rather than trusting a JWT claim: revoking staff
+    access must take effect immediately, not when a token happens to expire.
+
+    The lookup runs on the caller's own tenant-scoped session, so this
+    dependency cannot itself be used to read across tenants — it only answers
+    "is the caller staff?".
+    """
+    factory = get_session_factory()
+    async with factory() as session, session.begin():
+        await set_tenant_for_session(session, str(user.tenant_id))
+        row = await session.get(AppUser, user.user_id)
+        is_admin = bool(row and row.is_platform_admin and row.is_active)
+    if not is_admin:
+        # 404, not 403: confirming the console exists tells a probing tenant
+        # owner there is something worth attacking.
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="not found")
+    return user
+
+
+async def get_admin_db() -> AsyncIterator[AsyncSession]:
+    """Unscoped session for the admin console.
+
+    No `app.current_tenant` is set, so RLS-protected tables return NOTHING
+    here. That is deliberate: admin queries are restricted to the tables that
+    genuinely hold no tenant-private content (tenant, plan), and anything
+    needing per-tenant data binds that tenant explicitly. Weakening RLS to
+    make an admin screen easier would defeat the product's main guarantee.
+    """
+    factory = get_session_factory()
+    async with factory() as session, session.begin():
+        yield session
+
+
+__all__ = [
+    "AuthContext",
+    "get_admin_db",
+    "get_current_user",
+    "get_db",
+    "get_scoped_db",
+    "require_platform_admin",
+]

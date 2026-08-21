@@ -5,11 +5,11 @@ import enum
 import uuid
 from datetime import datetime
 
-from sqlalchemy import CheckConstraint, ForeignKey, Index, Text
+from sqlalchemy import Boolean, CheckConstraint, ForeignKey, Index, Text, text
 from sqlalchemy.dialects.postgresql import CITEXT
 from sqlalchemy.dialects.postgresql import UUID as PG_UUID
 from sqlalchemy.orm import Mapped, mapped_column
-from sqlalchemy.sql.sqltypes import TIMESTAMP, Boolean
+from sqlalchemy.sql.sqltypes import TIMESTAMP
 
 from outreach_os.core.db import Base
 
@@ -49,6 +49,12 @@ class AppUser(Base):
     # The provider's stable subject id. Matched on instead of email, because
     # an address can be reassigned to a different person inside a company.
     auth_subject: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # Platform staff, NOT a tenant role. `role` describes a user's position
+    # inside their own workspace; this grants read access across customers and
+    # is set only by direct database statement (see migration 0018).
+    is_platform_admin: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, server_default=text("false")
+    )
     created_at: Mapped[datetime] = mapped_column(
         TIMESTAMP(timezone=True), nullable=False, server_default="now()"
     )

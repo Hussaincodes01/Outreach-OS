@@ -1,5 +1,6 @@
 "use client";
 
+import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { CreditCard, ExternalLink, TrendingUp } from "lucide-react";
 import { api } from "@/lib/api-client";
@@ -13,8 +14,24 @@ export default function BillingPage() {
   const plans = useQuery({ queryKey: ["plans"], queryFn: () => api.listPlans() });
   const sub = useQuery({ queryKey: ["subscription"], queryFn: () => api.getSubscription() });
   const usage = useQuery({ queryKey: ["usage"], queryFn: () => api.getUsage() });
+  // Only shown on demand once someone is already paying — see below.
+  const [showUpgrades, setShowUpgrades] = useState(false);
 
   const activeCode = sub.data?.plan.code ?? "starter";
+
+  // "Paying" means a live subscription, not merely a plan label: a tenant row
+  // says 'starter' from signup, which is not the same as having bought it.
+  const isSubscribed =
+    !!sub.data && ["active", "trialing", "past_due"].includes(sub.data.status);
+  const currentPrice = sub.data?.plan.monthly_price_cents ?? -1;
+
+  const allPlans = plans.data?.items ?? [];
+  // Once subscribed, the plan grid is not a shop front any more. Showing
+  // "Choose a plan" to someone who already chose one is noise, and offering a
+  // downgrade button next to their live plan invites accidental churn — so we
+  // surface strictly higher tiers, and only when they ask.
+  const upgrades = allPlans.filter((p) => p.monthly_price_cents > currentPrice);
+  const visiblePlans = isSubscribed ? upgrades : allPlans;
 
   return (
     <div className="space-y-6">
@@ -93,10 +110,43 @@ export default function BillingPage() {
         </CardContent>
       </Card>
 
+      {isSubscribed && !showUpgrades && (
+        <Card>
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2">
+              <TrendingUp className="h-4 w-4" aria-hidden="true" />
+              Need more headroom?
+            </CardTitle>
+            <CardDescription>
+              {upgrades.length > 0
+                ? `You're on ${sub.data?.plan.name}. Higher tiers raise your send, lead and token limits.`
+                : `You're on ${sub.data?.plan.name} — our highest tier. Use the portal below to change or cancel.`}
+            </CardDescription>
+          </CardHeader>
+          {upgrades.length > 0 && (
+            <CardContent>
+              <Button variant="outline" onClick={() => setShowUpgrades(true)}>
+                View upgrade options
+              </Button>
+            </CardContent>
+          )}
+        </Card>
+      )}
+
+      {(!isSubscribed || showUpgrades) && visiblePlans.length > 0 && (
       <div>
-        <h2 className="mb-3 text-lg font-semibold">Choose a plan</h2>
+        <div className="mb-3 flex items-center justify-between">
+          <h2 className="text-lg font-semibold">
+            {isSubscribed ? "Upgrade your plan" : "Choose a plan"}
+          </h2>
+          {isSubscribed && (
+            <Button variant="ghost" size="sm" onClick={() => setShowUpgrades(false)}>
+              Cancel
+            </Button>
+          )}
+        </div>
         <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
-          {plans.data?.items.map((p) => {
+          {visiblePlans.map((p) => {
             const isActive = p.code === activeCode;
             return (
               <Card key={p.id} className={isActive ? "border-primary" : ""}>
@@ -134,7 +184,11 @@ export default function BillingPage() {
                       window.location.href = r.checkout_url;
                     }}
                   >
-                    {isActive ? "Active" : "Switch to " + p.name}
+                    {isActive
+                      ? "Active"
+                      : isSubscribed
+                        ? `Upgrade to ${p.name}`
+                        : `Choose ${p.name}`}
                   </Button>
                 </CardContent>
               </Card>
@@ -142,6 +196,7 @@ export default function BillingPage() {
           })}
         </div>
       </div>
+      )}
 
       <Card>
         <CardHeader>

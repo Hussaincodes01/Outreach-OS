@@ -30,6 +30,44 @@ export interface TokenPair {
   tenant_id: string;
 }
 
+export interface AdminCustomerOut {
+  tenant_id: string;
+  name: string;
+  slug: string;
+  status: string;
+  plan: string;
+  user_count: number;
+  lead_count: number;
+  created_at: string;
+  month_usage_sends: number;
+  month_usage_leads: number;
+  month_usage_llm_tokens: number;
+  subscription_status: string | null;
+  subscription_provider: string | null;
+  current_period_end: string | null;
+  cancel_at_period_end: boolean;
+  monthly_price_cents: number;
+}
+
+export interface AdminCustomerPage {
+  items: AdminCustomerOut[];
+  total: number;
+  limit: number;
+  offset: number;
+}
+
+export interface AdminStatsOut {
+  total_customers: number;
+  active_customers: number;
+  suspended_customers: number;
+  paying_customers: number;
+  mrr_cents: number;
+  customers_by_plan: Record<string, number>;
+  signups_last_30d: number;
+  total_leads: number;
+  total_sends_this_month: number;
+}
+
 export interface UserOut {
   id: string;
   email: string;
@@ -38,6 +76,8 @@ export interface UserOut {
   created_at: string;
   /** Null until the address is confirmed. Access is never gated on this. */
   email_verified_at: string | null;
+  /** Platform staff. Set only by direct DB statement; gates the admin console. */
+  is_platform_admin: boolean;
 }
 
 export interface TenantOut {
@@ -838,6 +878,25 @@ export const api = {
   /** Full-page navigation: the provider's consent screen can't run in a fetch. */
   socialLoginUrl(provider: string): string {
     return `${API_URL}/v1/auth/oauth/${provider}/start`;
+  },
+
+  async adminStats(): Promise<AdminStatsOut> {
+    return request<AdminStatsOut>("/v1/admin/stats");
+  },
+
+  async adminCustomers(params: { q?: string; status?: string } = {}): Promise<AdminCustomerPage> {
+    const qs = new URLSearchParams();
+    if (params.q) qs.set("q", params.q);
+    if (params.status) qs.set("status", params.status);
+    const suffix = qs.toString() ? `?${qs}` : "";
+    return request<AdminCustomerPage>(`/v1/admin/customers${suffix}`);
+  },
+
+  async adminSetCustomerStatus(tenantId: string, status: string): Promise<AdminCustomerOut> {
+    return request<AdminCustomerOut>(`/v1/admin/customers/${tenantId}/status`, {
+      method: "PATCH",
+      body: JSON.stringify({ status }),
+    });
   },
 
   async forgotPassword(email: string): Promise<{ message: string }> {

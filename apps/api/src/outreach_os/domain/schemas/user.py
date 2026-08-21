@@ -18,6 +18,8 @@ class UserOut(ApiModel):
     # NULL until confirmed. Surfaced so the app can prompt without a second
     # round-trip; access is never gated on it.
     email_verified_at: datetime | None = None
+    # Lets the app show the admin console link. Read-only: no endpoint sets it.
+    is_platform_admin: bool = False
 
 
 class UserInvite(ApiModel):

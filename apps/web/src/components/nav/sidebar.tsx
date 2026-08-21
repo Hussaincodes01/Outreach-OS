@@ -25,6 +25,7 @@ import {
   Ban,
   CalendarCheck,
   Link2,
+  ShieldCheck,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useAuth } from "@/lib/auth";
@@ -54,6 +55,10 @@ const NAV = [
   { href: "/audit", label: "Audit", icon: ScrollText },
   { href: "/settings", label: "Settings", icon: Settings },
 ];
+
+// Platform staff only. Separate from NAV so a customer never renders it,
+// and the API returns 404 to non-staff regardless of what the UI shows.
+const ADMIN_NAV = { href: "/admin", label: "Admin", icon: ShieldCheck };
 
 export function Sidebar() {
   const pathname = usePathname();
@@ -97,6 +102,7 @@ export function Sidebar() {
             </Link>
           );
         })}
+        <AdminLink />
       </nav>
       <div className="border-t p-3">
         {user && (
@@ -133,5 +139,33 @@ function UnreadBadge() {
     <span className="rounded-full bg-red-600 px-2 py-0.5 text-xs font-semibold leading-none text-white">
       {n > 99 ? "99+" : n}
     </span>
+  );
+}
+
+
+/** Renders the admin console link only for platform staff. */
+function AdminLink() {
+  const pathname = usePathname();
+  const { data } = useQuery({
+    queryKey: ["me"],
+    queryFn: () => api.me(),
+    staleTime: 5 * 60_000,
+  });
+  if (!data?.is_platform_admin) return null;
+  const { href, label, icon: Icon } = ADMIN_NAV;
+  const active = pathname === href || pathname?.startsWith(href + "/");
+  return (
+    <Link
+      href={href}
+      className={cn(
+        "mt-2 flex items-center gap-3 rounded-md border-t border-dashed px-3 py-2 pt-3 text-sm font-medium",
+        active
+          ? "bg-primary text-primary-foreground"
+          : "text-muted-foreground hover:bg-muted hover:text-foreground"
+      )}
+    >
+      <Icon className="h-4 w-4" aria-hidden="true" />
+      <span className="flex-1">{label}</span>
+    </Link>
   );
 }
