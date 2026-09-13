@@ -236,19 +236,6 @@ class SendService:
         step.status = "sent"
         step.sent_at = send.sent_at
         step.attempts += 1
-        # Phase 7: record usage.
-        try:
-            from outreach_os.services.billing_service import record_usage
-
-            await record_usage(
-                self.session,
-                tenant_id=tenant_id,
-                metric="send",
-                source="send",
-                source_id=send.id,
-            )
-        except Exception:
-            log.warning("record_usage(send) failed", exc_info=True)
         return send
 
     # --- Helpers ---

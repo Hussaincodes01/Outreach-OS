@@ -134,22 +134,6 @@ async def run_scraping_job_async(job_id: uuid.UUID, tenant_id: uuid.UUID) -> dic
         summary["total_inserted"] = total_inserted
         summary["total_duplicates"] = total_duplicates
 
-        # Phase 7: record lead usage.
-        try:
-            from outreach_os.services.billing_service import record_usage
-
-            if total_inserted > 0:
-                await record_usage(
-                    session,
-                    tenant_id=tenant_id,
-                    metric="lead_scraped",
-                    quantity=total_inserted,
-                    source="scraping_job",
-                    source_id=job.id,
-                )
-        except Exception:
-            log.exception("record_usage(lead_scraped) failed")
-
         try:
             from outreach_os.services.notification_service import publish
 

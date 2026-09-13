@@ -44,34 +44,6 @@ def fake_calendar_and_crm():
     set_crm_client(None)
 
 
-async def _subscribe_growth(tenant_id) -> None:
-    """Phase 7 plan gate: CRM sync is only on growth+. The phase 5
-    tests predate billing — call this helper right after `signup` to
-    subscribe the new tenant to growth so CRM sync assertions pass."""
-    import uuid as _uuid
-    from datetime import datetime as _dt
-    from datetime import timezone as _tz
-
-    from outreach_os.core.db import get_session_factory
-    from outreach_os.core.tenancy import set_tenant_for_session
-    from outreach_os.services.billing_service import apply_subscription_event
-
-    factory = get_session_factory()
-    async with factory() as session, session.begin():
-        await set_tenant_for_session(session, str(tenant_id))
-        await apply_subscription_event(
-            session,
-            tenant_id=_uuid.UUID(str(tenant_id)),
-            plan_code="growth",
-            provider="stub",
-            provider_customer_id="test_cust",
-            provider_subscription_id="test_sub",
-            status="active",
-            current_period_start=_dt.now(_tz.utc),
-            current_period_end=_dt.now(_tz.utc),
-        )
-
-
 # --- helpers ---
 
 
@@ -368,7 +340,6 @@ async def test_crm_sync_meeting_writes_row_to_active_connections(
         password="pw-12345-AbCde",
         tenant_name="A-sync",
     )
-    await _subscribe_growth(a["tenant_id"])
     # Create a connection.
     r = await client.post(
         "/v1/crm/connections",
@@ -629,7 +600,6 @@ async def test_counter_reply_positive_auto_confirms_open_proposal(
             password="pw-12345-AbCde",
             tenant_name="A-cnt",
         )
-        await _subscribe_growth(a["tenant_id"])
         # Set up an active CRM connection to verify the auto-sync.
         r = await client.post(
             "/v1/crm/connections",

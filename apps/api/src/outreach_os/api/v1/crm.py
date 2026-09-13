@@ -31,7 +31,6 @@ from outreach_os.domain.schemas.phase5 import (
     CrmSyncEventOut,
     CrmSyncEventPage,
 )
-from outreach_os.services.billing_service import BillingError
 from outreach_os.services.crm_service import CrmService, CrmServiceError
 
 log = logging.getLogger(__name__)
@@ -229,12 +228,9 @@ async def sync_connection(
             Lead.id == meeting.lead_id, Lead.tenant_id == user.tenant_id
         )
     )).scalar_one_or_none()
-    try:
-        event = await crm_svc._sync_one(
-            tenant_id=user.tenant_id, conn=target, meeting=meeting, lead=lead
-        )
-    except BillingError as exc:
-        raise HTTPException(status_code=402, detail=str(exc)) from exc
+    event = await crm_svc._sync_one(
+        tenant_id=user.tenant_id, conn=target, meeting=meeting, lead=lead
+    )
     return CrmSyncEventPage(
         items=[_sync_to_out(event)], total=1, limit=1, offset=0,
     )

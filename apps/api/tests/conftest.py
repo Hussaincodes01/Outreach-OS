@@ -134,49 +134,6 @@ def _apply_migrations():
     with ThreadPoolExecutor(max_workers=1) as _ex_fix:
         _ex_fix.submit(_fix_auth_function).result()
 
-    # 4) Seed plan rows (the migration seeds them against the *default*
-    #    DB, but tests run against outreach_test. Idempotent INSERT.)
-    #    Also drop RLS on billing_portal_token — its token IS the capability.
-    def _seed_plans() -> None:
-        import sqlalchemy as _sa
-        from sqlalchemy import text as _t
-
-        # Admin connection: DROP POLICY / ALTER TABLE require table ownership,
-        # and migrations now run as the superuser (see step 2), so the tables
-        # are owned by the admin role rather than the app role.
-        admin_url = os.environ.get("DATABASE_URL_ADMIN", os.environ["DATABASE_URL"])
-        url = admin_url.replace("postgresql+asyncpg", "postgresql+psycopg2")
-        eng = _sa.create_engine(url)
-        with eng.begin() as conn:
-            conn.execute(_t(
-                """
-                INSERT INTO plan (code, name, monthly_price_cents, monthly_send_cap,
-                                  monthly_lead_cap, monthly_llm_token_cap,
-                                  crm_sync_enabled, slack_notifications_enabled,
-                                  email_digest_enabled, max_team_seats, max_mailboxes,
-                                  display_order)
-                VALUES
-                  ('starter',  'Starter',  2900,  500,    1000, 200000, false, false, false, 1, 1, 1),
-                  ('growth',   'Growth',   9900,  5000,   25000, 1500000, true,  true,  true,  5, 10, 2),
-                  ('scale',    'Scale',    29900, 25000,  100000, 10000000, true, true,  true,  25, 50, 3)
-                ON CONFLICT (code) DO NOTHING
-                """
-            ))
-            # billing_portal_token is a capability, not a tenant resource.
-            conn.exec_driver_sql(
-                "DROP POLICY IF EXISTS tenant_isolation_billing_portal_token ON billing_portal_token"
-            )
-            conn.exec_driver_sql(
-                "ALTER TABLE billing_portal_token DISABLE ROW LEVEL SECURITY"
-            )
-            conn.exec_driver_sql(
-                "ALTER TABLE billing_portal_token NO FORCE ROW LEVEL SECURITY"
-            )
-        eng.dispose()
-
-    with ThreadPoolExecutor(max_workers=1) as _ex2:
-        _ex2.submit(_seed_plans).result()
-
     yield  # type: ignore[misc]
 
 

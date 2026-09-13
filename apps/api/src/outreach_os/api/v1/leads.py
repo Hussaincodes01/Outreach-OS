@@ -2,7 +2,6 @@
 from __future__ import annotations
 
 import json
-import logging
 import uuid
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile, status
@@ -16,10 +15,8 @@ from outreach_os.domain.schemas.lead_import import (
     RowProblemOut,
 )
 from outreach_os.domain.schemas.lead_scraping import LeadOut, LeadPage
-from outreach_os.services import billing_service, lead_import, lead_service
+from outreach_os.services import lead_import, lead_service
 from outreach_os.services.lead_import import LeadImportError
-
-log = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/leads", tags=["leads"])
 
@@ -114,37 +111,9 @@ async def import_leads(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)
         ) from exc
 
-    # Charge imports against the same monthly allowance as scraped leads —
-    # otherwise the plan cap is trivially bypassed by uploading a file.
-    if parsed.leads:
-        try:
-            await billing_service.check_within_limits(
-                db,
-                tenant_id=user.tenant_id,
-                metric="lead_scraped",
-                n=len(parsed.leads),
-            )
-        except billing_service.BillingLimitExceededError as exc:
-            raise HTTPException(
-                status_code=status.HTTP_402_PAYMENT_REQUIRED, detail=str(exc)
-            ) from exc
-
     inserted, duplicates = await lead_service.insert_leads(
         db, tenant_id=user.tenant_id, job_id=None, raw_leads=parsed.leads
     )
-
-    if inserted:
-        try:
-            await billing_service.record_usage(
-                db,
-                tenant_id=user.tenant_id,
-                metric="lead_scraped",
-                quantity=inserted,
-                source="csv_import",
-            )
-        except Exception:
-            # Usage accounting must never lose the customer's import.
-            log.exception("record_usage(lead_scraped) failed after CSV import")
 
     await write_audit_event(
         db,

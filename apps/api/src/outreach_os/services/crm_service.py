@@ -182,17 +182,6 @@ class CrmService:
         """Push a confirmed meeting to every active CrmConnection for
         the tenant. Returns the list of CrmSyncEvent rows (one per
         connection, success or failure)."""
-        # Phase 7: gate CRM sync behind the plan's feature flag.
-        from outreach_os.services.billing_service import (
-            BillingError,
-            effective_plan,
-        )
-        plan = await effective_plan(self.session, tenant_id=tenant_id)
-        if not plan.crm_sync_enabled:
-            raise BillingError(
-                f"CRM sync requires a {plan.code or 'higher'} plan; "
-                f"upgrade to growth or above to push meetings to your CRM."
-            )
         meeting = await self._load_meeting(tenant_id, meeting_id)
         conns = (await self.session.execute(
             select(CrmConnection).where(
@@ -271,17 +260,6 @@ class CrmService:
         meeting: Meeting,
         lead: Lead | None,
     ) -> CrmSyncEvent:
-        # Phase 7: gate CRM sync behind the plan's feature flag.
-        from outreach_os.services.billing_service import (
-            BillingError,
-            effective_plan,
-        )
-        plan = await effective_plan(self.session, tenant_id=tenant_id)
-        if not plan.crm_sync_enabled:
-            raise BillingError(
-                f"CRM sync requires a {plan.code or 'higher'} plan; "
-                f"upgrade to growth or above to push meetings to your CRM."
-            )
         event = CrmSyncEvent(
             tenant_id=tenant_id,
             crm_connection_id=conn.id,

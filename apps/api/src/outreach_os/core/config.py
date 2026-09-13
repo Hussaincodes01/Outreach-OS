@@ -249,14 +249,6 @@ class Settings(BaseSettings):
     # Stub Slack delivery latency in tests.
     notification_slack_request_timeout: int = 5
 
-    # --- Phase 7: billing ---
-    # "stub" or "stripe". In dev/test we use stub (no external calls).
-    billing_provider: Literal["stub", "stripe"] = "stub"
-    stripe_secret_key: SecretStr = SecretStr("")
-    stripe_webhook_secret: SecretStr = SecretStr("")
-    # Cron interval (seconds) for the monthly usage rollup.
-    billing_rollup_interval_seconds: int = 3600
-
     @field_validator("cors_allowed_origins", mode="before")
     @classmethod
     def _split_cors_origins(cls, value: object) -> object:
@@ -312,12 +304,6 @@ class Settings(BaseSettings):
 
         if self.public_base_url.startswith("http://localhost"):
             problems.append("PUBLIC_BASE_URL must be the public URL (tracking/unsubscribe links)")
-
-        if self.billing_provider == "stripe":
-            if not self.stripe_secret_key.get_secret_value():
-                problems.append("STRIPE_SECRET_KEY must be set when BILLING_PROVIDER=stripe")
-            if not self.stripe_webhook_secret.get_secret_value():
-                problems.append("STRIPE_WEBHOOK_SECRET must be set when BILLING_PROVIDER=stripe")
 
         if problems:
             bullet = "\n  - "
