@@ -131,8 +131,11 @@ npm install
 
 ## Run Tests
 
-API — requires the dev infrastructure (`npm run dev:infra`) to be running,
-since the suite exercises real PostgreSQL RLS:
+API — requires the dev infrastructure (`npm run dev:infra`) to be running:
+the suite exercises real PostgreSQL RLS, and several tests (draft storage,
+inbox polling, sequence-send) need the dev MinIO on host port `9000` too —
+if it's stopped, those tests fail with `EndpointConnectionError` against
+`localhost:9000`, not a code bug.
 
 ```bash
 cd apps/api && .venv/Scripts/python -m pytest

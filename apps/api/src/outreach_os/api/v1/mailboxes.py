@@ -15,7 +15,12 @@ from outreach_os.api.deps import AuthContext, get_current_user, get_scoped_db
 from outreach_os.core.audit import write_audit_event
 from outreach_os.core.errors import MailError
 from outreach_os.domain.models.mailbox import Mailbox
-from outreach_os.domain.schemas.mailbox import MailboxOut, SendTestRequest, SmtpCreate
+from outreach_os.domain.schemas.mailbox import (
+    MailboxOut,
+    SendTestRequest,
+    SendTestResult,
+    SmtpCreate,
+)
 from outreach_os.services import vault_service
 from outreach_os.services.mailbox import mailer
 from outreach_os.services.mailbox.transport import smtp_config
@@ -148,13 +153,13 @@ async def create_smtp_mailbox(
 # ----------------- send test -----------------
 
 
-@router.post("/{mailbox_id}/send-test")
+@router.post("/{mailbox_id}/send-test", response_model=SendTestResult)
 async def send_test(
     mailbox_id: uuid.UUID,
     payload: SendTestRequest,
     user: AuthContext = Depends(get_current_user),
     db: AsyncSession = Depends(get_scoped_db),
-) -> dict[str, str]:
+) -> SendTestResult:
     m = await db.get(Mailbox, mailbox_id)
     if m is None:
         raise HTTPException(
@@ -173,4 +178,10 @@ async def send_test(
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY, detail=str(exc)
         ) from exc
-    return result
+    # `mailer.send_test_email` returns a loosely-typed `dict[str, Any]` (its
+    # "ok" key is a bool); the route's old `-> dict[str, str]` annotation
+    # doubled as FastAPI's implicit response_model and rejected that bool on
+    # every real send with a 500 ResponseValidationError. Validating through
+    # `SendTestResult` here (rather than widening the annotation) keeps the
+    # response shape documented and enforced.
+    return SendTestResult(**result)
