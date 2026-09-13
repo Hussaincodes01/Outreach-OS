@@ -146,11 +146,17 @@ async def test_poll_ingests_reply_for_real_send(client, sent_send) -> None:
     from outreach_os.workers.tasks.inbox import poll_inboxes_async
 
     _mailbox_id, message_id = sent_send
-    summary = await poll_inboxes_async(fetch=lambda cfg: [_raw_reply(message_id)])
+    marked: list[bytes] = []
+    summary = await poll_inboxes_async(
+        fetch=lambda cfg: [(b"1", _raw_reply(message_id))],
+        mark_seen=lambda cfg, uids: marked.extend(uids),
+    )
     assert summary["ingested"] == 1
     replies = (await client.get("/v1/replies")).json()
     items = replies["items"] if isinstance(replies, dict) else replies
     assert any(r["from_email"] == "pat@prospect.example" for r in items)
+    # The ingested (and durably committed) message's uid was marked seen.
+    assert marked == [b"1"]
 
 
 async def test_poll_rebinds_tenant_after_duplicate_so_later_messages_ingest(client, sent_send) -> None:
@@ -164,11 +170,20 @@ async def test_poll_rebinds_tenant_after_duplicate_so_later_messages_ingest(clie
     dup_raw = _raw_reply(message_id, message_id="<dup-reply@prospect.example>")
     new_raw = _raw_reply(message_id, message_id="<fresh-reply@prospect.example>")
 
+    # A no-op mark_seen: the default real one would try to actually connect
+    # to the fixture's fake "imap.example.org" host.
+    def _noop_mark_seen(cfg: dict, uids: list[bytes]) -> None:
+        pass
+
     # Ingest the "duplicate" once up front so the second poll sees it as one.
-    summary1 = await poll_inboxes_async(fetch=lambda cfg: [dup_raw])
+    summary1 = await poll_inboxes_async(
+        fetch=lambda cfg: [(b"1", dup_raw)], mark_seen=_noop_mark_seen
+    )
     assert summary1["ingested"] == 1
 
-    summary2 = await poll_inboxes_async(fetch=lambda cfg: [dup_raw, new_raw])
+    summary2 = await poll_inboxes_async(
+        fetch=lambda cfg: [(b"1", dup_raw), (b"2", new_raw)], mark_seen=_noop_mark_seen
+    )
     assert summary2["ingested"] == 1  # only the fresh one
     replies = (await client.get("/v1/replies")).json()
     items = replies["items"] if isinstance(replies, dict) else replies
@@ -186,22 +201,125 @@ async def test_poll_earlier_ingested_reply_survives_a_later_duplicate(client, se
     first_raw = _raw_reply(message_id, message_id="<first-reply@prospect.example>")
     dup_raw = _raw_reply(message_id, message_id="<first-reply@prospect.example>")
 
-    summary = await poll_inboxes_async(fetch=lambda cfg: [first_raw, dup_raw])
+    summary = await poll_inboxes_async(
+        fetch=lambda cfg: [(b"1", first_raw), (b"2", dup_raw)],
+        mark_seen=lambda cfg, uids: None,
+    )
     assert summary["ingested"] == 1
     replies = (await client.get("/v1/replies")).json()
     items = replies["items"] if isinstance(replies, dict) else replies
     assert any(r["message_id_header"] == "<first-reply@prospect.example>" for r in items)
 
 
+async def test_poll_isolates_a_failing_message_and_only_marks_the_others_seen(
+    client, sent_send, monkeypatch
+) -> None:
+    """One message's classification blowing up (any non-IntegrityError
+    exception from deep inside ReplyService.ingest) must not abort the rest
+    of the mailbox's batch, and that message's uid must not be handed to
+    mark_seen -- it was never durably ingested, so it must come back on the
+    next poll instead of being silently lost."""
+    from outreach_os.services.reply_service import ReplyService
+    from outreach_os.workers.tasks.inbox import poll_inboxes_async
+
+    _mailbox_id, message_id = sent_send
+    bad_raw = _raw_reply(message_id, message_id="<bad-reply@prospect.example>")
+    good_raw = _raw_reply(message_id, message_id="<good-reply@prospect.example>")
+
+    original = ReplyService._classify_and_act
+
+    async def _boom(self, *, tenant_id, reply, send):
+        if reply.message_id_header == "<bad-reply@prospect.example>":
+            raise RuntimeError("classification exploded")
+        return await original(self, tenant_id=tenant_id, reply=reply, send=send)
+
+    monkeypatch.setattr(ReplyService, "_classify_and_act", _boom)
+
+    marked: list[bytes] = []
+    summary = await poll_inboxes_async(
+        fetch=lambda cfg: [(b"1", bad_raw), (b"2", good_raw)],
+        mark_seen=lambda cfg, uids: marked.extend(uids),
+    )
+    assert summary["ingested"] == 1  # only the good one
+    assert summary["errors"] == 0  # the mailbox-level guard never saw it
+    assert marked == [b"2"]  # the bad message's uid was withheld
+    replies = (await client.get("/v1/replies")).json()
+    items = replies["items"] if isinstance(replies, dict) else replies
+    assert any(r["message_id_header"] == "<good-reply@prospect.example>" for r in items)
+    assert not any(r["message_id_header"] == "<bad-reply@prospect.example>" for r in items)
+
+
+async def test_poll_skips_unparseable_message_without_marking_it_seen(
+    client, sent_send, monkeypatch
+) -> None:
+    """A malformed message that makes parse_message raise is skipped (not
+    marked seen, so it is retried next poll) while the rest of the batch
+    still proceeds."""
+    from outreach_os.services.mailbox import inbox as inbox_module
+    from outreach_os.workers.tasks.inbox import poll_inboxes_async
+
+    _mailbox_id, message_id = sent_send
+    bad_raw = b"BADMARKER not a real email at all"
+    good_raw = _raw_reply(message_id, message_id="<ok-reply@prospect.example>")
+
+    original_parse = inbox_module.parse_message
+
+    def _flaky_parse(raw: bytes):
+        if b"BADMARKER" in raw:
+            raise ValueError("not parseable")
+        return original_parse(raw)
+
+    monkeypatch.setattr(inbox_module, "parse_message", _flaky_parse)
+
+    marked: list[bytes] = []
+    summary = await poll_inboxes_async(
+        fetch=lambda cfg: [(b"1", bad_raw), (b"2", good_raw)],
+        mark_seen=lambda cfg, uids: marked.extend(uids),
+    )
+    assert summary["ingested"] == 1
+    assert marked == [b"2"]
+    replies = (await client.get("/v1/replies")).json()
+    items = replies["items"] if isinstance(replies, dict) else replies
+    assert any(r["message_id_header"] == "<ok-reply@prospect.example>" for r in items)
+
+
+async def test_poll_mark_seen_failure_does_not_lose_already_ingested_replies(client, sent_send) -> None:
+    """If mark_seen blows up (e.g. the IMAP connection drops between
+    fetching and flagging), replies already ingested and committed earlier
+    in that same poll must still be there -- the failure is isolated to
+    the (idempotent, safe-to-retry) seen-flagging step."""
+    from outreach_os.workers.tasks.inbox import poll_inboxes_async
+
+    _mailbox_id, message_id = sent_send
+    raw = _raw_reply(message_id, message_id="<durable-reply@prospect.example>")
+
+    def _boom_mark_seen(cfg: dict, uids: list[bytes]) -> None:
+        raise OSError("connection reset")
+
+    summary = await poll_inboxes_async(
+        fetch=lambda cfg: [(b"1", raw)],
+        mark_seen=_boom_mark_seen,
+    )
+    # poll_mailbox raised (mark_seen's OSError propagates through to the
+    # worker's per-mailbox guard), but the reply it already committed
+    # before that point is not undone.
+    assert summary["errors"] == 1
+    replies = (await client.get("/v1/replies")).json()
+    items = replies["items"] if isinstance(replies, dict) else replies
+    assert any(r["message_id_header"] == "<durable-reply@prospect.example>" for r in items)
+
+
 def test_fetch_unseen_against_real_greenmail_imap() -> None:
     """Exercise the real IMAP client against the dev-stack GreenMail server
     (no auth; any mailbox is auto-created on first delivery). Skipped, not
-    failed, when localhost:3143 is unreachable."""
+    failed, when localhost:3143 is unreachable. Proves fetch_unseen's PEEK
+    never marks a message seen on its own, and mark_seen is what actually
+    does so."""
     import smtplib
     import socket
     import uuid
 
-    from outreach_os.services.mailbox.inbox import fetch_unseen
+    from outreach_os.services.mailbox.inbox import fetch_unseen, mark_seen
 
     try:
         with socket.create_connection(("localhost", 3143), timeout=2):
@@ -220,17 +338,29 @@ def test_fetch_unseen_against_real_greenmail_imap() -> None:
     with smtplib.SMTP("localhost", 3025, timeout=5) as smtp:
         smtp.send_message(msg)
 
-    raws = fetch_unseen(
-        {
-            "imap_host": "localhost",
-            "imap_port": 3143,
-            "imap_use_ssl": False,
-            "username": address,
-            "password": address,
-        }
-    )
+    cfg = {
+        "imap_host": "localhost",
+        "imap_port": 3143,
+        "imap_use_ssl": False,
+        "username": address,
+        "password": address,
+    }
+
+    raws = fetch_unseen(cfg)
     assert len(raws) == 1
-    parsed = parse_message(raws[0])
+    uid, raw = raws[0]
+    parsed = parse_message(raw)
     assert parsed is not None
     assert parsed.subject == "Real IMAP fetch"
     assert "GreenMail" in parsed.body_text
+
+    # BODY.PEEK[] never marks the message \Seen -- fetching again still
+    # returns it, unlike the old RFC822-fetch-marks-seen behaviour.
+    raws_again = fetch_unseen(cfg)
+    assert len(raws_again) == 1
+    assert raws_again[0][0] == uid
+
+    mark_seen(cfg, [uid])
+
+    # Now that it's explicitly been marked seen, it drops out of UNSEEN.
+    assert fetch_unseen(cfg) == []

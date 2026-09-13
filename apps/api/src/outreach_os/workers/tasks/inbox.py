@@ -10,7 +10,6 @@ import asyncio
 import imaplib
 import logging
 from datetime import datetime
-from typing import Any
 
 from sqlalchemy import select
 
@@ -19,22 +18,30 @@ from outreach_os.core.errors import MailError
 from outreach_os.core.tenancy import set_tenant_for_session
 from outreach_os.domain.models.mailbox import Mailbox
 from outreach_os.services.local_workspace import LOCAL_TENANT_ID
-from outreach_os.services.mailbox.inbox import FetchFn, fetch_unseen, poll_mailbox
+from outreach_os.services.mailbox.inbox import FetchFn, MarkSeenFn, fetch_unseen, poll_mailbox
+from outreach_os.services.mailbox.inbox import mark_seen as mark_seen_default
 from outreach_os.workers.celery_app import celery_app
 
 log = logging.getLogger(__name__)
 
 
-async def poll_inboxes_async(*, fetch: FetchFn | None = None) -> dict[str, int]:
+async def poll_inboxes_async(
+    *, fetch: FetchFn | None = None, mark_seen: MarkSeenFn | None = None
+) -> dict[str, int]:
     """Poll every active SMTP mailbox in the local workspace for replies.
 
     Runs one mailbox at a time, each inside its own try/except so a single
     bad mailbox (unreachable host, rejected login, no IMAP settings at all)
     is logged and counted in `errors` rather than aborting the rest of the
     run -- the whole point of polling N mailboxes is that one broken one
-    must not stop replies from being captured on the others.
+    must not stop replies from being captured on the others. A failure
+    inside `mark_seen` (e.g. the connection drops between fetching and
+    flagging) lands here too: the ingests it already committed stand, and
+    the affected messages are simply re-fetched (and safely re-ingested as
+    duplicates, or ingested for the first time) on the next poll.
     """
     fetch_fn = fetch or fetch_unseen
+    mark_seen_fn = mark_seen or mark_seen_default
     factory = get_session_factory()
     mailboxes = 0
     ingested_total = 0
@@ -55,7 +62,9 @@ async def poll_inboxes_async(*, fetch: FetchFn | None = None) -> dict[str, int]:
             # poll_mailbox) has no other reason to re-read it afterwards.
             mailbox_id = mailbox.id
             try:
-                ingested_total += await poll_mailbox(session, mailbox, fetch=fetch_fn)
+                ingested_total += await poll_mailbox(
+                    session, mailbox, fetch=fetch_fn, mark_seen=mark_seen_fn
+                )
                 await session.commit()
             except (MailError, imaplib.IMAP4.error, OSError) as exc:
                 log.warning("inbox poll failed mailbox=%s: %s", mailbox_id, exc)
@@ -68,7 +77,7 @@ async def poll_inboxes_async(*, fetch: FetchFn | None = None) -> dict[str, int]:
 
 
 @celery_app.task(name="outreach_os.workers.poll_inboxes")  # type: ignore[untyped-decorator]
-def poll_inboxes() -> dict[str, Any]:
+def poll_inboxes() -> dict[str, int]:
     """Celery wrapper. In eager mode this runs the async core on a
     brand-new event loop in a thread, then returns."""
     log.info("poll_inboxes start")
