@@ -1,96 +1,122 @@
 # Outreach OS
 
-**Outreach OS** is a multi-tenant SaaS platform that automates outbound B2B sales outreach — from lead generation and research to personalized email drafting, sending, and follow-up. Built for sales teams who want AI-powered pipeline without sharing a database with competitors.
+**Outreach OS** is a single-user, self-hosted tool that automates outbound
+B2B sales outreach — from lead import/research to personalized email
+drafting, sending through your own mailbox, and reply tracking. One
+workspace, `docker compose up`, your own provider keys.
 
 ## Core Capabilities
 
-### Lead Scraping & Enrichment
-- **Multi-source scraping**: Serper (web search), company site crawling, LinkedIn (via Proxycurl)
-- **Configurable ICPs** (Ideal Customer Profiles) per tenant — scrape targets matching predefined personas
+### Lead Import & Scraping
+- **CSV import**: bring your own list — preview the column mapping, confirm
+  it, import. No scraping key required.
+- **Multi-source scraping** (optional, needs keys): Serper (web search),
+  company site crawling, LinkedIn (via Proxycurl)
+- **Configurable ICPs** (Ideal Customer Profiles) — scrape targets matching
+  a persona
 - **Deduplication**: automatic merge/block logic prevents duplicate leads
 - **Per-source rate limits** enforced via Redis
 
-### BYOK AI Layer
-- **13 providers**: OpenAI, Anthropic, Gemini, Groq, Mistral, DeepSeek, xAI, Cohere, Together AI, Fireworks AI, OpenRouter, Perplexity, Ollama (self-hosted)
-- **Per-tenant keys only**: resolved from the encrypted vault and passed explicitly to LiteLLM. Never read from the process environment, which would leak between tenants in a shared worker
-- **No silent fallback**: a missing key returns `428` with an actionable message instead of producing fabricated output
-- **Live key verification**: the Test action makes a real 1-token call, so a bad key surfaces at setup rather than mid-campaign
-- **Independent chat and embedding models**: draft on a provider with no embeddings API and still use the knowledge base
-
-### AI Draft Pipeline
-- **Tool-calling research agent**: the model chooses among lead profile, company site, knowledge base, previous touches, and web search, bounded by a step cap and a cumulative token budget
-- **Graceful degradation**: models without function calling fall back to deterministic research; a draft is always produced
-- **Full audit trail**: every tool call, argument, token count, and stop reason is recorded on `agent_run.trace`
-- **RAG pipeline**: uploaded content → chunk → embed → vector search → context for the draft
-- **Campaign-based drafting**: multi-step sequences that copy the sender's voice from their own sample emails
+### AI Drafting, Powered By Your Own Key
+- **13 providers**: OpenAI, Anthropic, Gemini, Groq, Mistral, DeepSeek, xAI,
+  Cohere, Together AI, Fireworks AI, OpenRouter, Perplexity, Ollama
+  (self-hosted)
+- **Keys from `.env`**: read from the process environment / `.env` file,
+  never entered through the web app. An env key always takes precedence
+  over one stored via the app.
+- **No silent fallback**: a missing key returns `428` with an actionable
+  message instead of producing fabricated output
+- **Live key verification**: the Integrations page's Test action makes a
+  real 1-token call, so a bad key surfaces immediately rather than mid-campaign
+- **Independent chat and embedding models**: draft on a provider with no
+  embeddings API and still use the knowledge base
+- **Tool-calling research agent**: the model chooses among lead profile,
+  company site, knowledge base, previous touches, and web search, bounded
+  by a step cap and a cumulative token budget
+- **Full audit trail**: every tool call, argument, token count, and stop
+  reason is recorded on `agent_run.trace`
+- **RAG pipeline**: uploaded content → chunk → embed → vector search →
+  context for the draft
+- **Campaign-based drafting**: multi-step sequences that copy the sender's
+  voice from their own sample emails
 
 ### Send & Reply Engine
-- **Mailbox management**: per-tenant send accounts with encrypted credential storage (Fernet + vault)
-- **Send pipeline**: sequence steps → drafted content → outbound send with tracking
-- **Reply monitoring**: inbound webhook endpoint (HMAC-signed) that captures replies and triggers follow-up logic
-- **Suppression list**: opt-out management per tenant
+- **Real sending**: sequence sends go out through the connected mailbox's
+  own SMTP credentials — never a shared platform mailer
+- **Mailboxes**: SMTP for sending, optional IMAP for reply capture; Gmail
+  and Outlook both work via an app password (no OAuth flow)
+- **Reply capture, two paths**: a beat task polls each IMAP-enabled
+  mailbox's unseen messages (`In-Reply-To`/`References` matching, PEEK
+  until durably handled), and an inbound webhook (HMAC-signed) for
+  providers that push instead
+- **Suppression list**: opt-out management
 
 ### Meeting Scheduler
-- **CRM sync** (Stub client, extensible to Salesforce/HubSpot): pulls leads, meetings, and syncs activity back
-- **Meeting scheduling** with availability windows, buffer times, and calendar provider support
-
-### Billing & Plans
-- **Tiered plans**: Starter ($29/mo), Growth ($99/mo), Scale ($299/mo)
-- **Usage metering**: sends, leads scraped, LLM tokens — per-tenant monthly rollup
-- **Stripe integration** (with local stub for dev) — checkout, webhook subscription creation, portal tokens
-- **Plan gating**: enforcing send caps, lead caps, CRM sync, Slack notifications, team seats per plan tier
-
-### Notifications
-- **In-app notifications**: read/unread, per-tenant
-- **Slack webhooks**: tenant-configurable
-- **Notification preferences**: granular opt-in per channel
+- **Meeting scheduling** with availability windows and buffer times
+- **CRM sync and calendar provider clients are stubs** — see Known
+  Limitations below
 
 ### Security & Compliance
-- **Row-Level Security** (RLS) on every tenant-scoped table — FORCE RLS + NOBYPASSRLS app role
-- **RLS tenancy isolation tests** validate cross-tenant data leaks are impossible
-- **Hash-chained append-only audit log** — no UPDATE/DELETE allowed, even by superuser
-- **GDPR endpoints**: DSAR export (NDJSON stream), Right to Erasure (soft-delete + anonymize, 30-day grace)
-- **Vault-encrypted credentials** (Fernet per-tenant key, wrapped by master key)
-- **Rate limiting**: per-IP for auth (login=10/min, signup=5/min), per-tenant for scraping, per-IP for webhooks
-- **Security headers**: X-Frame-Options DENY, X-Content-Type-Options nosniff, CSP, HSTS, Permissions-Policy
-- **JWT with key rotation**: multi-secret support, kid claim, active key ID
+- **No authentication** — see [docs/threat-model.md](docs/threat-model.md)
+  before exposing this beyond localhost
+- **Row-Level Security** (RLS) on every workspace-scoped table, still bound
+  per request to the one local workspace — FORCE RLS + NOBYPASSRLS app role
+- **Tenancy isolation tests** (via a test-only auth override) validate the
+  RLS mechanism itself still works, even though there's one workspace in
+  production
+- **Hash-chained append-only audit log** — no UPDATE/DELETE allowed, even
+  by superuser
+- **GDPR endpoints**: DSAR export (NDJSON stream), Right to Erasure
+  (soft-delete + anonymize, 30-day grace)
+- **Vault-encrypted credentials** (Fernet per-workspace key, wrapped by
+  `VAULT_MASTER_KEY`) for mailbox passwords and any provider key stored via
+  the app
+- **Rate limiting**: per-IP for the inbound webhook
+- **Security headers**: X-Frame-Options DENY, X-Content-Type-Options
+  nosniff, CSP, HSTS, Permissions-Policy
 
 ## Architecture
 
 - **Backend**: Python 3.11 + FastAPI + SQLAlchemy 2.0 async + asyncpg + Redis
-- **Frontend**: Next.js 14 (App Router) + TanStack Query. No Supabase — auth is the custom JWT layer described above
-- **Database**: PostgreSQL 16 + pgvector (pgvector/pgvector:0.7.4-pg16)
-- **Infrastructure**: Docker Compose (Postgres, Redis 7, MinIO S3, MailHog)
-- **Background tasks**: Celery + Redis broker (eager mode in tests)
-- **Object storage**: MinIO (S3-compatible) per-tenant draft/attachment storage
-- **Auth**: bcrypt password hashing + JWT (HS256) with key rotation
-- **AI**: LiteLLM, with credentials resolved per tenant at call time
+- **Frontend**: Next.js 14 (App Router) + TanStack Query. No login — the app
+  opens straight into the dashboard.
+- **Database**: PostgreSQL 16 + pgvector (`pgvector/pgvector:0.7.4-pg16`)
+- **Infrastructure**: Docker Compose — Postgres, Redis, MinIO (`quay.io/minio/*`
+  images; Docker Hub no longer serves them), GreenMail (SMTP+IMAP, `--profile e2e`)
+- **Background tasks**: Celery + Redis broker; `beat` schedules `send_due`
+  (default every 60s) and `poll_inboxes` (default every 120s)
+- **Object storage**: MinIO (S3-compatible), draft bodies and attachments
+- **AI**: LiteLLM, credentials resolved from `.env` at call time
 
 ## Testing
 
-- 210 tests passing, 1 skipped (the live-provider test needs `OUTREACH_TEST_OPENAI_KEY`)
-- `ruff` and `mypy --strict` clean across the API
-- RLS isolation tests verify cross-tenant data separation
-- BYOK tests verify one tenant's key is invisible to another, and that the
-  process environment is never used as a fallback
-- Agent tests verify the step cap, the token budget, and graceful degradation
-- Config tests construct `Settings` from real environment variables — the only
-  way to catch env-parsing bugs that unit tests miss
-- Audit append-only tests verify immutability
+- API test suite (`cd apps/api && .venv/Scripts/python -m pytest`) runs
+  against the dev infra (`npm run dev:infra`); `ruff check .` and
+  `mypy src` are clean. Auth/billing/admin/social tests were removed along
+  with those routes; tenancy-isolation tests were kept via a test-only auth
+  override.
+- `scripts/e2e_smoke.py` (`npm run smoke`) exercises the live, fully
+  containerized stack over real HTTP, SMTP and IMAP: health, the local
+  workspace, onboarding, an ICP, a CSV lead import, an SMTP mailbox
+  connected to GreenMail, a real SMTP send captured by GreenMail's IMAP,
+  and — when a provider key is configured — a full draft → sequence →
+  send → reply-capture loop.
 
 ## Project Status
 
-**Verified working:** the production images build; `docker-compose.prod.yml`
-brings up Postgres, Redis, migrations, API, worker and beat; `/health` returns
-ok; and an end-to-end HTTP smoke test covers signup under RLS, the onboarding
-checklist, the provider catalogue, `428` on a missing key, encrypted credential
-storage, and audit writes.
+**Verified working:** `docker compose up -d --build` from the repo root
+brings up Postgres, Redis, MinIO, migrations, the API, worker, beat and web;
+`/health` and `/health/ready` return ok; the web app serves the dashboard;
+an ICP, a CSV lead import, an SMTP mailbox connection, and a real SMTP send
+captured by a local IMAP server all work end to end with no provider key
+configured.
 
-**Not yet verified:** no call has been made to a real LLM provider. The BYOK
-path, the agent's tool-calling loop, and the catalogue's model IDs are all
-exercised against fakes. Run `tests/test_phase3_live_llm.py` with
-`OUTREACH_TEST_OPENAI_KEY` set before trusting this with real campaigns.
+**Requires a provider key to verify further:** draft generation, the
+agent's tool-calling research loop, and the full send → reply-capture loop
+all need an LLM key in `.env`. `scripts/e2e_smoke.py` implements those
+checks and will run them automatically once a key is present; without one,
+it reports them as skipped rather than fabricating a result.
 
-**Known gaps:** leads can only be created by the scraping pipeline — there is
-no import endpoint yet. Billing defaults to the stub provider, and the calendar
-and CRM clients are stubs.
+**Known gaps:** the CRM (Google Sheets) sync and calendar provider clients
+are stubs; the CRM sync page is unlinked from the web app's navigation.
+There is no time-of-day send-window enforcement in this build.

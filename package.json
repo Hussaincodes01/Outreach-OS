@@ -2,7 +2,7 @@
   "name": "outreach-os",
   "version": "0.1.0",
   "private": true,
-  "description": "Outreach OS monorepo (SaaS build, OSS release planned later).",
+  "description": "Outreach OS — single-user, self-hosted AI outbound sales tool.",
   "workspaces": [
     "apps/*",
     "packages/*"
@@ -22,7 +22,8 @@
     "build:web": "npm run build --workspace=@outreach-os/web",
     "lint:web": "npm run lint --workspace=@outreach-os/web",
     "typecheck:web": "npm run typecheck --workspace=@outreach-os/web",
-    "codegen:web": "bash scripts/generate-api-client.sh"
+    "codegen:web": "bash scripts/generate-api-client.sh",
+    "smoke": "python scripts/e2e_smoke.py"
   },
   "engines": {
     "node": ">=20"

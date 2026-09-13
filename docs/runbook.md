@@ -3,6 +3,12 @@
 Operating Outreach OS: deploying it, checking it came up, and the failure modes
 that have actually bitten us.
 
+**There is no authentication.** Every request acts as the one built-in local
+workspace. Do not bind the stack's ports to a public interface or otherwise
+expose it to the internet without putting an authenticating reverse proxy
+(nginx/Caddy with basic auth, a Tailscale/WireGuard tunnel, an OAuth-gated
+proxy, ...) in front of it. See [docs/threat-model.md](threat-model.md).
+
 ---
 
 ## Deploy
@@ -10,39 +16,53 @@ that have actually bitten us.
 The build context must be the repository root.
 
 ```bash
-cp .env.production.example .env.production   # then fill in real secrets
-docker compose -f infra/docker/docker-compose.prod.yml up -d --build
+npm run setup                          # creates .env, fills VAULT_MASTER_KEY / INBOUND_WEBHOOK_SECRET
+# edit .env: add provider key(s) — optional, see SETUP.md
+npm start                              # docker compose up -d --build
 ```
 
-This starts six services: `postgres`, `redis`, a one-shot `migrate`, then
-`api`, `worker` and `beat`, plus `web`. Only `api` (8000) and `web` (3000) are
-published to the host; the database and Redis stay on the internal network.
+`npm start` is `docker compose up -d --build` against the root
+`docker-compose.yml`. It starts `postgres`, `redis`, `minio`, a one-shot
+`migrate`, then `api`, `worker`, `beat`, and `web`. Only `api` (8000) and
+`web` (3000) are published to the host; Postgres, Redis and MinIO stay on
+the internal Docker network.
+
+Add `--profile e2e` (or run `docker compose --profile e2e up -d --build`
+directly) to also start GreenMail, a local SMTP+IMAP server used by the
+smoke test and by manual end-to-end testing on host ports 3025 (SMTP) and
+3143 (IMAP).
+
+Stop the stack with `npm stop`; follow API/worker/beat logs with
+`npm run logs`.
 
 ### Generating secrets
 
+`npm run setup` generates these automatically; only needed by hand if you
+want to rotate one:
+
 ```bash
-# JWT_SECRET, INBOUND_WEBHOOK_SECRET, NEXTAUTH_SECRET
+# INBOUND_WEBHOOK_SECRET
 openssl rand -hex 32
 
 # VAULT_MASTER_KEY (must decode to >= 32 bytes)
 python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
 ```
 
-**Rotating `VAULT_MASTER_KEY` makes every stored tenant credential
-undecryptable.** There is no re-wrap path yet. Treat it as permanent for the
-life of the deployment, and back it up separately from the database.
+**Rotating `VAULT_MASTER_KEY` makes every stored credential (mailbox
+SMTP/IMAP passwords, any provider key stored via the app rather than
+`.env`) undecryptable.** There is no re-wrap path yet. Treat it as permanent
+for the life of the deployment, and back it up separately from the database.
 
 ### Required in production
 
-The API refuses to boot with an insecure or incomplete configuration — by
-design, so a misconfiguration fails at startup rather than silently at
-runtime. `ENVIRONMENT=production` requires:
+The API refuses to boot with an insecure or incomplete configuration when
+`ENVIRONMENT=production` — by design, so a misconfiguration fails at
+startup rather than silently at runtime:
 
 | Variable | Why it is enforced |
 | --- | --- |
-| `JWT_SECRET` | Must be >= 16 chars. The default would let anyone mint tokens |
 | `VAULT_MASTER_KEY` | Must be base64 decoding to >= 32 bytes |
-| `INBOUND_WEBHOOK_SECRET` | HMAC for inbound reply webhooks; without it anyone can post replies |
+| `INBOUND_WEBHOOK_SECRET` | HMAC for the inbound reply webhook; without it anyone can post replies |
 | `CORS_ALLOWED_ORIGINS` | The browser cannot call the API without it |
 | `PUBLIC_BASE_URL` | Must not be localhost — tracking and unsubscribe links embed it |
 | `CELERY_TASK_ALWAYS_EAGER` | Must be `false`, or background jobs run inside web requests |
@@ -50,35 +70,61 @@ runtime. `ENVIRONMENT=production` requires:
 `CORS_ALLOWED_ORIGINS` accepts a comma-separated list
 (`https://app.example.com, https://admin.example.com`) or a JSON array.
 
-Provider API keys are **not** environment variables. Each workspace adds its
-own under Settings → Integrations, and they are stored encrypted per tenant.
+Provider API keys are environment variables, not something entered through
+the UI. Set them in `.env` (or the container environment) and restart the
+API — see [SETUP.md](../SETUP.md#provider-api-keys-live-in-env).
 
 ---
 
 ## Verify a deployment
 
 ```bash
-docker compose -f infra/docker/docker-compose.prod.yml ps      # api + postgres healthy
-docker compose -f infra/docker/docker-compose.prod.yml logs migrate | tail -5
-curl -fsS http://localhost:8000/health                          # {"status":"ok"}
+cd /d/OutreachOS/Outreach-OS
+npm run setup
+docker compose config -q
+docker compose --profile e2e up -d --build
+docker compose ps
+curl -fsS http://localhost:8000/health
+curl -fsS http://localhost:8000/health/ready
+curl -fsS http://localhost:8000/v1/tenants/me
+curl -fsS -o /dev/null -w "%{http_code}\n" http://localhost:3000/dashboard
+docker compose logs migrate | tail -5
+docker compose logs beat | grep -E "send_due|poll_inboxes" | head
 ```
 
-`migrate` is expected to show as `Exited (0)` — it is a one-shot job.
+Expected: every service `running`/`healthy` (`migrate` shows `Exited (0)` —
+it is a one-shot job); both health checks return `{"status":"ok"}`;
+`/v1/tenants/me` returns slug `local`; the web dashboard responds `200`;
+the beat log shows both `send_due` and `poll_inboxes` on the schedule.
+
+For a fuller proof — a real ICP, a CSV lead import, a real SMTP send and
+IMAP reply capture against GreenMail, and (if a provider key is set) a full
+draft → send → reply loop — run the smoke script:
+
+```bash
+npm run smoke
+```
+
+See `scripts/e2e_smoke.py` for exactly what each of its 11 checks proves;
+it prints one `PASS`/`FAIL`/`SKIP` line per check and exits non-zero on any
+`FAIL`.
 
 Then confirm the tenancy layer is really on, which is the property most worth
 checking after any database change:
 
 ```bash
-docker compose -f infra/docker/docker-compose.prod.yml exec postgres \
+docker compose exec postgres \
   psql -U postgres -d outreach -tAc \
   "SELECT count(*) FILTER (WHERE relrowsecurity) || ' of ' || count(*) || ' tables have RLS'
    FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace
    WHERE n.nspname='public' AND c.relkind='r'"
 ```
 
-Expect 29 of 33. The four without RLS are `plan`, `alembic_version`,
+Expect `29 of 33`. The four without RLS are `plan`, `alembic_version`,
 `tenant` (the master table, gated at the application layer) and
-`billing_portal_token` (the token itself is the capability).
+`billing_portal_token` (the token itself is the capability). `plan` and
+`billing_portal_token` are unused tables left in place (see
+[docs/architecture.md](architecture.md)) rather than dropped.
 
 ---
 
@@ -91,7 +137,8 @@ Two roles, and the distinction matters:
   actually bypasses RLS; a non-superuser cannot do this.
 - **`outreach`** — `NOSUPERUSER NOBYPASSRLS`. What the API, worker and beat
   connect as. Superusers bypass RLS unconditionally, so running the app as one
-  would silently disable tenant isolation.
+  would silently disable the tenancy boundary that still exists underneath
+  the single local workspace.
 
 Both are created by `infra/docker/postgres/initdb`, which runs **only on an
 empty data volume**. Changing those scripts has no effect on an existing
@@ -110,7 +157,7 @@ the bootstrap `postgres` database silently grants nothing where it matters.
 volume, apply it manually:
 
 ```bash
-docker compose -f infra/docker/docker-compose.prod.yml exec -T postgres \
+docker compose exec -T postgres \
   psql -U postgres -d outreach < infra/docker/postgres/initdb/03-grants-appdb.sql
 ```
 
@@ -118,22 +165,52 @@ docker compose -f infra/docker/docker-compose.prod.yml exec -T postgres \
 
 Read the message — it lists every problem at once. Most common is
 `CORS_ALLOWED_ORIGINS` being unset, or `PUBLIC_BASE_URL` still pointing at
-localhost.
+localhost, in a `production` environment.
 
 ### `must be able to SET ROLE "postgres"` during migration
 
 Migrations are running as the app role. They must run as the superuser; the
 compose file overrides `DATABASE_URL` for the `migrate` service only.
 
-### Drafts fail with "No … API key connected"
+### Drafts fail with a `428`
 
-Working as intended: that workspace has not connected a provider key. It is a
-`428`, not a `500`. Point the user at Settings → Integrations.
+Working as intended: no LLM provider key is configured. Add
+`<PROVIDER>_API_KEY` to `.env` (see [SETUP.md](../SETUP.md#provider-api-keys-live-in-env))
+and restart the API (`docker compose restart api worker beat`, or
+`npm start` again). The response body names which provider/model was
+requested.
 
 ### Drafts fail only for one provider
 
-Use the Test button on the credential — it makes a real call. Expired keys,
-exhausted quota, and models not enabled for that account all surface there.
+Use the **Test** button on the Integrations page, or
+`POST /v1/credentials/providers/{provider}/test` — it makes a real call.
+Expired keys, exhausted quota, and models not enabled for that account all
+surface there.
+
+### IMAP reply capture never picks anything up
+
+- Confirm the mailbox was created with `imap_host` set —
+  `GET /v1/mailboxes` shows `imap_enabled`.
+- Gmail/Outlook require an **app password**, not the account password (see
+  [README.md](../README.md#mailboxes)); a plain password fails IMAP login
+  even though SMTP sending may have worked.
+- The beat schedule polls every `INBOX_POLL_INTERVAL_SECONDS` (default
+  120s) — check `docker compose logs beat | grep poll_inboxes` for recent
+  runs and any login errors.
+- Messages are fetched with PEEK and marked `\Seen` only after they are
+  durably handled — a reply that keeps reappearing as unseen across polls
+  means ingestion is failing after the fetch; check the worker logs.
+
+### A sequence step never sends
+
+- Confirm a mailbox is connected and active (`GET /v1/mailboxes`) — sends
+  pick the first active mailbox for the workspace.
+- Confirm the mailbox hasn't hit its `daily_send_cap`.
+- Check `docker compose logs beat | grep send_due` — `send_due` runs every
+  `SEND_DUE_INTERVAL_SECONDS` (default 60s).
+- If you've added time-of-day send-window logic on top of this build, make
+  sure `SEND_WINDOW_START_HOUR`/`SEND_WINDOW_END_HOUR` in `.env` cover the
+  current hour (UTC) — the shipped build does not gate sends by time of day.
 
 ### StealthyFetcher cannot find a browser
 
@@ -143,9 +220,11 @@ and is world-readable inside the container.
 
 ### Port already allocated
 
-Something else is on 3000 or 8000. Either stop it, or publish elsewhere with an
-override file — Compose *merges* port lists, so you must use `!override` to
-replace rather than append:
+Something else is on 3000, 8000, 3025 or 3143. This project's Postgres/Redis
+are internal-only in the root stack (no host port), so a collision there
+means another `outreach-os` stack is already running. Either stop it, or
+publish elsewhere with an override file — Compose *merges* port lists, so
+you must use `!override` to replace rather than append:
 
 ```yaml
 services:
@@ -162,6 +241,10 @@ services:
 Changing the API's address means rebuilding the web image, not just restarting
 it.
 
+If you're running `npm run dev:infra` (native API/web development) *and*
+`docker compose --profile e2e`, note both default GreenMail to host ports
+3025/3143 — only one can be up at a time.
+
 ---
 
 ## Backups
@@ -170,17 +253,18 @@ it.
 
 ```bash
 # Dump
-docker compose -f infra/docker/docker-compose.prod.yml exec -T postgres \
+docker compose exec -T postgres \
   pg_dump -U postgres -Fc outreach > outreach-$(date +%F).dump
 
 # Restore into an empty database
-docker compose -f infra/docker/docker-compose.prod.yml exec -T postgres \
+docker compose exec -T postgres \
   pg_restore -U postgres -d outreach --clean --if-exists < outreach-2026-01-01.dump
 ```
 
-A dump is useless without the matching `VAULT_MASTER_KEY` — stored credentials
-cannot be decrypted without it. Back up the key alongside, but not in the same
-place.
+A dump is useless without the matching `VAULT_MASTER_KEY` — stored
+credentials (mailbox passwords, any provider key added through the app
+instead of `.env`) cannot be decrypted without it. Back up the key
+alongside, but not in the same place.
 
 ---
 
@@ -188,11 +272,15 @@ place.
 
 Honest gaps, so nobody assumes otherwise:
 
-- **No TLS.** The compose stack serves plain HTTP. Put a reverse proxy in
-  front; the API already trusts `X-Forwarded-*` via
+- **No TLS, no authentication.** The compose stack serves plain HTTP with no
+  login. Put an authenticating reverse proxy in front for anything beyond
+  localhost use; the API already trusts `X-Forwarded-*` via
   `--forwarded-allow-ips=*`, which is only safe behind a proxy you control.
 - **Bundled Postgres credentials are `outreach`/`outreach`.** Fine on an
-  internal network, not for a real deployment. Use a managed database and drop
-  the `postgres` and `redis` services from the compose file.
+  internal Docker network, not for a database exposed elsewhere. Use a
+  managed database and drop the `postgres`/`redis`/`minio` services from the
+  compose file if you need that.
 - **No monitoring.** `SENTRY_DSN` is unset by default; nothing scrapes metrics.
+- **The CRM (Google Sheets) and calendar provider clients are stubs.** The
+  CRM sync page is unlinked from the web app's navigation.
 - **No incident history.** This section should grow with real postmortems.
