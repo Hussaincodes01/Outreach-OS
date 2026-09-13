@@ -186,7 +186,7 @@ def smtp_send_reply(
     msg["To"] = to_addr
     msg["In-Reply-To"] = in_reply_to
     msg["References"] = references
-    msg["Message-ID"] = make_msgid(domain="prospect.greenmail.test")
+    msg["Message-ID"] = make_msgid(domain="prospect.example.com")
     with smtplib.SMTP(host, port, timeout=15) as smtp:
         smtp.sendmail(from_addr, [to_addr], msg.as_string())
 
@@ -574,8 +574,8 @@ def main() -> int:
 
     api = args.api.rstrip("/")
     run_id_suffix = uuid.uuid4().hex[:8]
-    prospect_email = f"prospect-{run_id_suffix}@greenmail.test"
-    sender_email = f"sender-{run_id_suffix}@greenmail.test"
+    prospect_email = f"prospect-{run_id_suffix}@example.com"
+    sender_email = f"sender-{run_id_suffix}@example.com"
 
     print(f"== Outreach OS smoke test against {api} ==")
 
