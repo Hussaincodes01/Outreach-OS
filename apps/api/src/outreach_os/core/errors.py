@@ -10,10 +10,6 @@ class NotFoundError(OutreachError):
     pass
 
 
-class AuthError(OutreachError):
-    pass
-
-
 class ValidationError(OutreachError):
     pass
 

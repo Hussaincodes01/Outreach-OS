@@ -19,12 +19,13 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from outreach_os.core.config import get_settings
+from outreach_os.core.errors import MailError
 from outreach_os.core.llm import LLMClient
 from outreach_os.core.mailer import (
     MailerClient,
     MailerError,
     OutgoingMessage,
-    get_mailer_client,
+    get_mailer_override,
 )
 from outreach_os.domain.models.campaign_step import CampaignStep
 from outreach_os.domain.models.draft import Draft
@@ -34,6 +35,7 @@ from outreach_os.domain.models.send import Send
 from outreach_os.domain.models.sequence_step import SequenceStep
 from outreach_os.domain.models.suppression import Suppression
 from outreach_os.services.draft_service import DraftGenerationResult, DraftService
+from outreach_os.services.mailbox.transport import mailer_for_mailbox
 
 log = logging.getLogger(__name__)
 
@@ -46,7 +48,12 @@ class SendService:
     def __init__(self, session: AsyncSession, *, llm: LLMClient | None = None, mailer: MailerClient | None = None) -> None:
         self.session = session
         self.llm = llm
-        self.mailer = mailer or get_mailer_client()
+        # Precedence: constructor-injected mailer > process override installed
+        # via `set_mailer_client` (the test hook) > the sending mailbox's own
+        # SMTP (resolved per-step in `execute_step`). Deliberately no fallback
+        # to the platform `get_mailer_client()` here — a shared SmtpMailer/
+        # StubMailer must never carry campaign sends.
+        self._mailer = mailer or get_mailer_override()
         self.settings = get_settings()
 
     # --- Query helpers ---
@@ -189,9 +196,12 @@ class SendService:
         self.session.add(send)
         await self.session.flush()
 
-        # 8. Hand off to the mailer.
+        # 8. Hand off to the mailer. Resolve it here (not in __init__) so a
+        # decrypt/config failure on THIS mailbox marks only this send failed,
+        # rather than raising before the batch even starts.
         try:
-            receipt = self.mailer.send(
+            mailer = self._mailer or mailer_for_mailbox(mailbox)
+            receipt = mailer.send(
                 OutgoingMessage(
                     to_email=lead.email,
                     from_email=mailbox.email_address,
@@ -202,7 +212,7 @@ class SendService:
                     references=None,
                 )
             )
-        except MailerError as exc:
+        except (MailerError, MailError) as exc:
             send.status = "failed"
             send.error = str(exc)[:500]
             step.attempts += 1

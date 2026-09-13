@@ -35,6 +35,12 @@ celery_app.conf.update(
             "task": "outreach_os.notifications.send_email_digest",
             "schedule": float(settings.notification_email_digest_interval_seconds),
         },
+        # Fires due SequenceStep rows through the mailbox's own SMTP. Without
+        # this entry `send_due` exists but nothing ever calls it.
+        "outreach_os.workers.send_due": {
+            "task": "outreach_os.workers.send_due",
+            "schedule": float(settings.send_due_interval_seconds),
+        },
     },
 )
 

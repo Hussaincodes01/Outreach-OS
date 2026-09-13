@@ -32,8 +32,3 @@ class SendTestRequest(ApiModel):
     to: EmailStr
     subject: str = Field(default="Outreach OS test", max_length=200)
     body: str = Field(default="Hello from Outreach OS.", max_length=10_000)
-
-
-class OAuthStartResponse(ApiModel):
-    auth_url: str
-    state: str

@@ -148,6 +148,14 @@ class SmtpMailer:
 
 _default_mailer: MailerClient | None = None
 
+# Tracks exactly what `set_mailer_client` installed, independent of
+# `_default_mailer`'s lazy-init fallback. Campaign sends must never silently
+# fall back to the platform SmtpMailer/StubMailer the way `get_mailer_client`
+# does — `get_mailer_override` lets a caller ask "is there a test override?"
+# and get a plain None when there isn't, instead of a freshly constructed
+# platform mailer.
+_override: MailerClient | None = None
+
 
 def get_mailer_client() -> MailerClient:
     """Return the process-wide mailer.
@@ -183,8 +191,20 @@ def get_mailer_client() -> MailerClient:
 
 def set_mailer_client(client: MailerClient | None) -> None:
     """Override the default mailer. Pass None to reset."""
-    global _default_mailer
+    global _default_mailer, _override
     _default_mailer = client
+    _override = client
+
+
+def get_mailer_override() -> MailerClient | None:
+    """The client installed via `set_mailer_client`, or None.
+
+    Unlike `get_mailer_client`, this never lazily constructs a platform
+    mailer — callers (e.g. `SendService`) use it to distinguish "a test
+    installed an override" from "nothing installed one", so they can fall
+    through to the mailbox's own SMTP transport instead of a shared one.
+    """
+    return _override
 
 
 # Transactional mail is tracked separately from campaign mail on purpose.
@@ -238,6 +258,7 @@ __all__ = [
     "SmtpMailer",
     "StubMailer",
     "get_mailer_client",
+    "get_mailer_override",
     "get_transactional_mailer",
     "set_mailer_client",
     "set_transactional_mailer",

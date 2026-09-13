@@ -39,7 +39,6 @@ from outreach_os.api.v1 import (
 from outreach_os.core.config import get_settings
 from outreach_os.core.db import dispose_engine
 from outreach_os.core.errors import (
-    AuthError,
     ConflictError,
     MailError,
     NotFoundError,
@@ -161,7 +160,6 @@ async def _handle_domain_error(request: Request, exc: OutreachError) -> JSONResp
     log.warning("domain_error", error=str(exc), path=request.url.path)
     status_map = {
         NotFoundError: status.HTTP_404_NOT_FOUND,
-        AuthError: status.HTTP_401_UNAUTHORIZED,
         ValidationError: status.HTTP_422_UNPROCESSABLE_ENTITY,
         OAuthError: status.HTTP_503_SERVICE_UNAVAILABLE,
         MailError: status.HTTP_502_BAD_GATEWAY,

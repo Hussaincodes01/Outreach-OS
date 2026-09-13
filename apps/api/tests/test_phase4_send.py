@@ -237,6 +237,91 @@ async def test_send_engine_fires_due_step(client, fake_llm_and_mailer):
         assert step.sent_at is not None
 
 
+# --- No override installed: falls back to the mailbox's own SMTP transport ---
+
+async def test_send_service_uses_mailer_for_mailbox_when_no_override(client, monkeypatch):
+    # The autouse fixture above installs a StubMailer override; remove it so
+    # SendService has to resolve a mailer itself instead of short-circuiting.
+    set_mailer_client(None)
+
+    a = await signup(
+        client, email="a-transport@acme-customer.example", password="pw-12345-AbCde",
+        tenant_name="A-transport",
+    )
+    from outreach_os.domain.models.campaign import Campaign
+    from outreach_os.domain.models.campaign_step import CampaignStep
+    from outreach_os.domain.models.lead import Lead
+    from outreach_os.domain.models.mailbox import Mailbox
+    factory = get_session_factory()
+    async with factory() as session, session.begin():
+        await set_tenant_for_session(session, a["tenant_id"])
+        camp = Campaign(
+            tenant_id=a["tenant_id"], name="transport-camp",
+            style_sample_emails=["Hi {first_name}, this is a test."],
+        )
+        session.add(camp)
+        await session.flush()
+        cs = CampaignStep(
+            tenant_id=a["tenant_id"], campaign_id=camp.id,
+            step_number=1, delay_days=0, subject_template="Hi",
+        )
+        session.add(cs)
+        mb = Mailbox(tenant_id=a["tenant_id"], provider="smtp", email_address="me@sender.example")
+        session.add(mb)
+        lead = Lead(tenant_id=a["tenant_id"], source="serper", email="target@x.example", first_name="T")
+        session.add(lead)
+        await session.flush()
+        camp_id, lead_id = camp.id, lead.id
+
+    r = await client.post(
+        "/v1/sequences", headers=bearer(a["access_token"]),
+        json={"campaign_id": str(camp_id), "name": "transport-run", "lead_ids": [str(lead_id)]},
+    )
+    assert r.status_code == 201, r.text
+    run_id = r.json()["id"]
+
+    from datetime import datetime, timedelta
+
+    async with factory() as session, session.begin():
+        await set_tenant_for_session(session, a["tenant_id"])
+        step = (await session.execute(
+            select_sequence_step_for_run(run_id)
+        )).scalar_one()
+        step.scheduled_at = datetime.utcnow() - timedelta(seconds=5)
+
+    from outreach_os.core.mailer import OutgoingMessage, SendReceipt
+
+    class _RecordingMailer:
+        def __init__(self) -> None:
+            self.sent: list[OutgoingMessage] = []
+
+        def send(self, message: OutgoingMessage) -> SendReceipt:
+            self.sent.append(message)
+            return SendReceipt(provider_message_id="recording-1", accepted=True)
+
+    recorder = _RecordingMailer()
+    recorded_mailboxes = []
+
+    def _fake_mailer_for_mailbox(mailbox):
+        recorded_mailboxes.append(mailbox)
+        return recorder
+
+    monkeypatch.setattr(
+        "outreach_os.services.send_service.mailer_for_mailbox", _fake_mailer_for_mailbox
+    )
+
+    async with factory() as session, session.begin():
+        await set_tenant_for_session(session, a["tenant_id"])
+        svc = SendService(session)  # no constructor mailer, no process override
+        sends = await svc.execute_due(tenant_id=a["tenant_id"])
+
+    assert len(sends) == 1
+    assert sends[0].status == "sent"
+    assert len(recorder.sent) == 1
+    assert recorder.sent[0].from_email == "me@sender.example"
+    assert recorded_mailboxes[0].email_address == "me@sender.example"
+
+
 # --- Daily cap ---
 
 async def test_send_engine_honours_daily_cap(client, fake_llm_and_mailer):

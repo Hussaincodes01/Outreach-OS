@@ -26,7 +26,6 @@ os.environ.setdefault(
     "postgresql+asyncpg://postgres:postgres@localhost:5433/outreach_test",
 )
 os.environ.setdefault("VAULT_MASTER_KEY", "2QU3n0T0Q3n0T0Q3n0T0Q3n0T0Q3n0T0Q3n0T0Q3n0Q=")
-os.environ.setdefault("JWT_SECRET", "test-jwt-secret-not-for-production-use-please")
 os.environ.setdefault("REDIS_URL", "redis://localhost:6380/15")
 os.environ.setdefault("CELERY_BROKER_URL", "redis://localhost:6380/15")
 os.environ.setdefault("CELERY_RESULT_BACKEND", "redis://localhost:6380/15")
@@ -50,6 +49,7 @@ from outreach_os.api.deps import get_current_user
 from outreach_os.core import env_keys
 from outreach_os.core.audit import write_audit_event
 from outreach_os.core.db import dispose_engine, get_engine, get_session_factory, reset_for_tests
+from outreach_os.core.mailer import StubMailer, set_mailer_client
 from outreach_os.core.tenancy import set_tenant_for_session
 from outreach_os.domain.schemas.auth import AuthContext
 from outreach_os.main import app
@@ -188,6 +188,22 @@ def _clear_provider_env(monkeypatch: pytest.MonkeyPatch, tmp_path) -> None:
     env_keys.reset_env_cache()
     yield
     env_keys.reset_env_cache()
+
+
+@pytest.fixture(autouse=True)
+def _stub_mailer_override() -> None:
+    """Install a StubMailer override before every test, reset after.
+
+    Campaign sends now resolve their mailer via `get_mailer_override()` with
+    no platform fallback (see `SendService`), so a test that exercises a send
+    path without installing its own mailer needs one in place or the send
+    would try to decrypt/contact a real SMTP mailbox. Tests that want to
+    prove the `mailer_for_mailbox` fallback itself call
+    `set_mailer_client(None)` to remove this override first.
+    """
+    set_mailer_client(StubMailer())
+    yield
+    set_mailer_client(None)
 
 
 @pytest_asyncio.fixture

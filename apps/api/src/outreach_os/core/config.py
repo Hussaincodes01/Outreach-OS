@@ -55,41 +55,9 @@ class Settings(BaseSettings):
     celery_broker_url: str = "redis://localhost:6380/1"
     celery_result_backend: str = "redis://localhost:6380/2"
 
-    # --- OAuth state signing ---
-    # Signs the short-lived `state` token of the Gmail/Outlook mailbox OAuth
-    # flows only. There is no user authentication.
-    jwt_secret: SecretStr = Field(default=SecretStr("change-me"))
-    jwt_alg: str = "HS256"
-
     # --- Vault ---
     # 32-byte Fernet key, base64-encoded. Generate with `openssl rand -base64 32`.
     vault_master_key: SecretStr = Field(default=SecretStr(""))
-
-    # --- OAuth: Google ---
-    google_oauth_client_id: str = ""
-    google_oauth_client_secret: SecretStr = SecretStr("")
-    google_oauth_redirect_uri: str = (
-        "http://localhost:8000/v1/mailboxes/oauth/gmail/callback"
-    )
-    google_oauth_scopes: str = (
-        "https://www.googleapis.com/auth/gmail.send,"
-        "https://www.googleapis.com/auth/gmail.readonly,"
-        "https://www.googleapis.com/auth/calendar.events"
-    )
-
-    # --- OAuth: Microsoft ---
-    microsoft_oauth_client_id: str = ""
-    microsoft_oauth_client_secret: SecretStr = SecretStr("")
-    microsoft_oauth_redirect_uri: str = (
-        "http://localhost:8000/v1/mailboxes/oauth/outlook/callback"
-    )
-    microsoft_oauth_tenant: str = "common"
-    microsoft_oauth_scopes: str = (
-        "offline_access "
-        "https://graph.microsoft.com/Mail.Send "
-        "https://graph.microsoft.com/Mail.ReadWrite "
-        "https://graph.microsoft.com/Calendars.ReadWrite"
-    )
 
     # --- S3 ---
     s3_endpoint_url: str | None = "http://localhost:9000"

@@ -23,9 +23,6 @@ dependencies = [
     "dnspython>=2.4,<3.0",
     "celery[redis]>=5.3,<6.0",
     "redis>=5.0,<6.0",
-    "python-jose[cryptography]>=3.3,<4.0",
-    "passlib[bcrypt]>=1.7.4,<2.0",
-    "bcrypt==4.0.1",
     "cryptography>=41.0,<43.0",
     "httpx>=0.26,<1.0",
     "python-multipart>=0.0.9,<1.0",
@@ -55,7 +52,6 @@ dev = [
     "freezegun>=1.4,<2.0",
     "ruff>=0.4,<1.0",
     "mypy>=1.8,<2.0",
-    "types-passlib>=1.7.7",
 ]
 
 [tool.hatch.build.targets.wheel]
