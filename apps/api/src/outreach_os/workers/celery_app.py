@@ -41,6 +41,13 @@ celery_app.conf.update(
             "task": "outreach_os.workers.send_due",
             "schedule": float(settings.send_due_interval_seconds),
         },
+        # Captures replies for mailboxes that only offer IMAP (no inbound
+        # webhook). Without this entry `poll_inboxes` exists but nothing
+        # ever calls it.
+        "outreach_os.workers.poll_inboxes": {
+            "task": "outreach_os.workers.poll_inboxes",
+            "schedule": float(settings.inbox_poll_interval_seconds),
+        },
     },
 )
 

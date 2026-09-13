@@ -174,6 +174,11 @@ class Settings(BaseSettings):
     # Inbound webhook shared secret (HMAC-SHA256 over the body).
     # MUST be set in production .env (no default for security).
     inbound_webhook_secret: str = ""
+    # Celery beat interval (seconds) for the poll_inboxes task (IMAP reply capture).
+    inbox_poll_interval_seconds: int = 120
+    # How many days back to search the mailbox for UNSEEN messages. Bounds the
+    # IMAP SEARCH window so a long-dormant mailbox doesn't scan its entire history.
+    inbox_poll_lookback_days: int = 14
     # Per-IP rate limits (per minute) for public endpoints, e.g. {"webhook": 100}.
     auth_rate_limits_per_minute: dict[str, int] = Field(default_factory=dict)
 

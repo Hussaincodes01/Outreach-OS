@@ -16,6 +16,10 @@ class MailboxOut(ApiModel):
     is_active: bool
     daily_send_cap: int
     created_at: datetime
+    # True when this mailbox has IMAP settings stored, so the inbox poller
+    # will pick it up. Computed from the decrypted config; a decrypt failure
+    # reads as False rather than raising out of a list endpoint.
+    imap_enabled: bool = False
 
 
 class SmtpCreate(ApiModel):
@@ -26,6 +30,13 @@ class SmtpCreate(ApiModel):
     email_address: EmailStr
     use_tls: bool = True
     daily_send_cap: int = Field(default=50, ge=1, le=10_000)
+    # Optional IMAP settings for inbound reply capture (Task 6). IMAP login
+    # reuses the SMTP `username`/`password` above -- most providers (Gmail,
+    # Outlook, and generic app-password setups) use the same credentials for
+    # both. Omitting `imap_host` leaves the mailbox send-only.
+    imap_host: str | None = Field(default=None, max_length=255)
+    imap_port: int = Field(default=993, ge=1, le=65535)
+    imap_use_ssl: bool = True
 
 
 class SendTestRequest(ApiModel):

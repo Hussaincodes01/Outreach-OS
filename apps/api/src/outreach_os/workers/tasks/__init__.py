@@ -4,9 +4,10 @@ from __future__ import annotations
 
 from outreach_os.workers.tasks import (
     draft,
+    inbox,
     notifications,
     scrape,
     send_tasks,
 )
 
-__all__ = ["draft", "notifications", "scrape", "send_tasks"]
+__all__ = ["draft", "inbox", "notifications", "scrape", "send_tasks"]

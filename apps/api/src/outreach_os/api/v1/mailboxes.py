@@ -18,11 +18,24 @@ from outreach_os.domain.models.mailbox import Mailbox
 from outreach_os.domain.schemas.mailbox import MailboxOut, SendTestRequest, SmtpCreate
 from outreach_os.services import vault_service
 from outreach_os.services.mailbox import mailer
+from outreach_os.services.mailbox.transport import smtp_config
 
 router = APIRouter(prefix="/mailboxes", tags=["mailboxes"])
 
 
 # ----------------- helpers -----------------
+
+
+def _imap_enabled(m: Mailbox) -> bool:
+    """Whether this mailbox has IMAP settings stored (the inbox poller will
+    pick it up). Decrypting just to check this is cheap; a decrypt failure
+    (corrupt/missing config, non-SMTP provider) reads as False rather than
+    raising out of a list endpoint."""
+    try:
+        cfg = smtp_config(m)
+    except MailError:
+        return False
+    return bool(cfg.get("imap_host"))
 
 
 def _to_out(m: Mailbox) -> MailboxOut:
@@ -33,6 +46,7 @@ def _to_out(m: Mailbox) -> MailboxOut:
         is_active=m.is_active,
         daily_send_cap=m.daily_send_cap,
         created_at=m.created_at,
+        imap_enabled=_imap_enabled(m),
     )
 
 
@@ -89,13 +103,20 @@ async def create_smtp_mailbox(
     db: AsyncSession = Depends(get_scoped_db),
 ) -> MailboxOut:
     _require_admin(user)
-    cfg = {
+    cfg: dict[str, object] = {
         "host": payload.host,
         "port": payload.port,
         "username": payload.username,
         "password": payload.password,
         "use_tls": payload.use_tls,
     }
+    # Only store the IMAP keys when the caller actually wants IMAP polling --
+    # a bare `smtp_config()` dict without them keeps older send-only
+    # mailboxes and `_imap_enabled()` both working unchanged.
+    if payload.imap_host:
+        cfg["imap_host"] = payload.imap_host
+        cfg["imap_port"] = payload.imap_port
+        cfg["imap_use_ssl"] = payload.imap_use_ssl
     ciphertext = vault_service.encrypt_for_tenant(str(user.tenant_id), cfg)
     m = Mailbox(
         tenant_id=user.tenant_id,
