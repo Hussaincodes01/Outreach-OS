@@ -6,6 +6,11 @@ tenant has not connected a key for the provider their model needs, we raise
 message pointing at the integrations page. A tenant is never billed to, or
 rate-limited by, another tenant's key.
 
+Single-user build: the operator's own key, set via the process environment or
+`.env`, takes precedence over a stored credential row (see `env_credentials`
+and `core.env_keys`) — there is only one workspace, so the env key and the
+workspace's key are the same thing, just configured a different way.
+
 Model names are LiteLLM-style `provider/model` (e.g. `openai/gpt-4o-mini`).
 The provider prefix selects which credential kind to look up.
 """
@@ -18,6 +23,7 @@ from dataclasses import dataclass
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from outreach_os.core.env_keys import env_value, provider_base_var, provider_key_var
 from outreach_os.core.errors import SetupRequiredError, ValidationError
 from outreach_os.core.llm import (
     LiteLLMClient,
@@ -460,10 +466,34 @@ def provider_for_model(model: str) -> str:
     return provider
 
 
+def env_credentials(provider: str) -> LLMCredentials | None:
+    """Credentials for `provider` from the environment / `.env`, or None if unset.
+
+    Checked ahead of any stored row (see `load_credentials`) — in this
+    single-user build the operator configuring `.env` and the operator owning
+    the one workspace are the same person, so there is nothing to arbitrate.
+    """
+    spec = _BY_PROVIDER.get(provider)
+    if spec is None:
+        raise UnknownProviderError(f"unsupported provider {provider!r}")
+    api_key = env_value(provider_key_var(provider)) or ""
+    api_base = env_value(provider_base_var(provider)) or ""
+    if spec.requires_api_base and not api_base:
+        return None
+    if spec.requires_api_key and not api_key:
+        return None
+    if not spec.requires_api_key and not api_key:
+        if not api_base:
+            return None  # a keyless provider (Ollama) is configured by its base URL
+        api_key = "not-required"
+    return LLMCredentials(provider=spec.provider, api_key=api_key, api_base=api_base or spec.api_base_hint)
+
+
 async def load_credentials(
     session: AsyncSession, *, tenant_id: uuid.UUID, provider: str
 ) -> LLMCredentials | None:
-    """Decrypt the tenant's key for one provider, or None if not connected.
+    """Resolve the key for one provider: environment / `.env` first, then the
+    tenant's own encrypted vault. None if neither has one.
 
     The session MUST already have the RLS GUC bound to `tenant_id` — the
     credential table is RLS-protected.
@@ -471,6 +501,10 @@ async def load_credentials(
     spec = _BY_PROVIDER.get(provider)
     if spec is None:
         raise UnknownProviderError(f"unsupported provider {provider!r}")
+
+    env = env_credentials(provider)
+    if env is not None:
+        return env
 
     cred = (
         await session.execute(
@@ -634,6 +668,7 @@ __all__ = [
     "client_for",
     "embedding_models",
     "embedding_spec",
+    "env_credentials",
     "load_credentials",
     "model_spec",
     "provider_for_model",

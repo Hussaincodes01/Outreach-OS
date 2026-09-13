@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import uuid
 from datetime import datetime
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import Field
 
@@ -46,6 +46,29 @@ class ProviderOut(ApiModel):
     # True when the model list can't be enumerated ahead of time (a gateway or
     # self-hosted endpoint), so the UI must accept a typed model name.
     allows_custom_model: bool = False
+    # Env var names the operator can set in `.env` to connect this provider
+    # without going through the UI at all.
+    env_var: str
+    env_base_var: str
+    # None when not connected. "env" beats "stored" — see services.llm_credentials.
+    configured_via: Literal["env", "stored"] | None = None
+
+
+class ProviderTestOut(ApiModel):
+    """Result of POST /credentials/providers/{provider}/test."""
+
+    ok: bool
+    message: str = ""
+
+
+class ScrapingKeyOut(ApiModel):
+    """One non-LLM integration (Serper, Proxycurl, ...) and whether its env
+    var is set. These have no stored-credential equivalent surfaced here —
+    GET /credentials lists any stored row separately."""
+
+    kind: str
+    env_var: str
+    configured: bool
 
 
 class CredentialOut(ApiModel):

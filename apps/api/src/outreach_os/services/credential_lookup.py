@@ -3,6 +3,10 @@
 Used by the scraping worker to grab the plaintext Serper/Proxycurl
 keys at run-time. The caller is responsible for setting the RLS GUC
 on the session (the worker does that immediately after opening it).
+
+An operator-set environment / `.env` value (see `core.env_keys`) takes
+precedence over a stored credential row, for the same reason it does for LLM
+keys: single workspace, single operator, so the env value always wins.
 """
 from __future__ import annotations
 
@@ -12,6 +16,7 @@ import uuid
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from outreach_os.core.env_keys import env_value, scraping_key_var
 from outreach_os.domain.models.credential import Credential
 from outreach_os.services import vault_service
 
@@ -50,6 +55,8 @@ async def get_credential_secrets(
         )
         if secret:
             out[cred.kind] = str(secret)
+    # Env wins over whatever was stored — see module docstring.
+    out.update({kind: v for kind in kinds if (v := env_value(scraping_key_var(kind)))})
     return out
 
 

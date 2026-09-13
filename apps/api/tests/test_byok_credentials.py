@@ -2,22 +2,23 @@
 
 The properties that matter for a bring-your-own-key product:
 
-1. A tenant's key is resolved from their own encrypted vault, never from the
-   process environment (a shared worker serves many tenants).
-2. Tenant A's key is never visible to tenant B.
-3. With no key connected, drafting fails with an actionable setup error rather
-   than silently producing fabricated output.
+1. A tenant's key is resolved from their own encrypted vault unless the
+   operator has set it in the environment / `.env` instead — this is a
+   single-user build, so the env key and the one workspace's key are the
+   same thing, and env wins when both are present (see `core.env_keys`).
+2. Tenant A's stored key is never visible to tenant B.
+3. With no key connected anywhere, drafting fails with an actionable setup
+   error rather than silently producing fabricated output.
 4. Provider selection follows the model name.
 """
 from __future__ import annotations
 
-import os
 import uuid
 
 import pytest
 
 from outreach_os.core.db import get_session_factory
-from outreach_os.core.llm import LLMCredentials, set_llm_client
+from outreach_os.core.llm import LiteLLMClient, LLMCredentials, set_llm_client
 from outreach_os.core.tenancy import set_tenant_for_session
 from outreach_os.domain.models.tenant import Tenant
 from outreach_os.services.credential_lookup import create_credential
@@ -129,23 +130,41 @@ async def test_missing_key_raises_actionable_setup_error() -> None:
     assert "Integrations" in str(exc.value)
 
 
-async def test_env_var_is_never_used_as_a_fallback(monkeypatch) -> None:
-    """Strict BYOK: a key in the server environment must not satisfy a tenant
-    that hasn't connected one of their own."""
-    monkeypatch.setenv("OPENAI_API_KEY", "sk-server-key-should-be-ignored")
+async def test_env_var_takes_precedence_over_a_missing_stored_key(monkeypatch) -> None:
+    """Single-user build: the operator's own env key satisfies any tenant,
+    even one that never stored a row of its own — there is only one real
+    workspace, so the env key IS that workspace's key."""
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-env-key")
     tenant_id = await _mk_tenant("byok-env")
     set_llm_client(None)
     try:
         factory = get_session_factory()
         async with factory() as session, session.begin():
             await set_tenant_for_session(session, str(tenant_id))
-            with pytest.raises(MissingLLMCredentialsError):
-                await resolve_llm_client(
-                    session, tenant_id=tenant_id, model="openai/gpt-4o-mini"
-                )
+            client = await resolve_llm_client(
+                session, tenant_id=tenant_id, model="openai/gpt-4o-mini"
+            )
     finally:
         set_llm_client(None)
-    assert os.environ.get("OPENAI_API_KEY") == "sk-server-key-should-be-ignored"
+    assert isinstance(client, LiteLLMClient)
+    assert client._credentials.api_key == "sk-env-key"  # private field; no public accessor exists
+
+
+async def test_env_var_takes_precedence_over_a_stored_key(monkeypatch) -> None:
+    """Env beats a stored row too, not just a missing one."""
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-env-key")
+    tenant_id = await _mk_tenant("byok-env-over-stored")
+    await _store_key(tenant_id, "llm_openai", "sk-stored-key")
+    set_llm_client(None)
+    try:
+        factory = get_session_factory()
+        async with factory() as session, session.begin():
+            await set_tenant_for_session(session, str(tenant_id))
+            creds = await load_credentials(session, tenant_id=tenant_id, provider="openai")
+    finally:
+        set_llm_client(None)
+    assert creds is not None
+    assert creds.api_key == "sk-env-key"
 
 
 async def test_resolved_client_is_bound_to_the_tenants_key() -> None:

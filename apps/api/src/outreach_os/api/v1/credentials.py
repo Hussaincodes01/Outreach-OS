@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import uuid
 from datetime import datetime, timezone
+from typing import Literal
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy import select
@@ -10,18 +11,27 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from outreach_os.api.deps import AuthContext, get_current_user, get_scoped_db
 from outreach_os.core.audit import write_audit_event
+from outreach_os.core.env_keys import provider_base_var, provider_key_var, scraping_key_var
 from outreach_os.core.vault import VaultError
 from outreach_os.domain.models.credential import Credential
+from outreach_os.domain.models.tenant import Tenant
 from outreach_os.domain.schemas.credential import (
     CredentialCreate,
     CredentialOut,
     CredentialTestResult,
     ProviderOut,
+    ProviderTestOut,
+    ScrapingKeyOut,
 )
 from outreach_os.services import vault_service
+from outreach_os.services.credential_lookup import get_credential_secrets
 from outreach_os.services.llm_credentials import (
+    NON_LLM_KINDS,
     PROVIDERS,
     VALID_CREDENTIAL_KINDS,
+    MissingLLMCredentialsError,
+    env_credentials,
+    provider_spec,
     spec_for_kind,
     verify_credentials,
 )
@@ -203,28 +213,132 @@ async def list_providers(
 
     The integrations page and the onboarding checklist both read this, so the
     UI never hard-codes a provider list that can drift from the backend.
+
+    An env-configured provider (see `core.env_keys`) always reports as
+    connected, ahead of any stored row for the same provider.
     """
     rows = (await db.execute(select(Credential))).scalars().all()
     by_kind = {c.kind: c for c in rows}
-    return [
-        ProviderOut(
-            provider=p.provider,
-            credential_kind=p.credential_kind,
-            label=p.label,
-            console_url=p.console_url,
-            supports_embeddings=p.supports_embeddings,
-            connected=p.credential_kind in by_kind,
-            last_verified_at=(
-                by_kind[p.credential_kind].last_verified_at
-                if p.credential_kind in by_kind
-                else None
-            ),
-            description=p.description,
-            requires_api_base=p.requires_api_base,
-            requires_api_key=p.requires_api_key,
-            api_base_hint=p.api_base_hint,
-            model_count=len(p.models),
-            allows_custom_model=p.allows_custom_model,
+    tenant = await db.get(Tenant, user.tenant_id)
+    verified_providers: dict[str, str] = (
+        (tenant.onboarding_state or {}).get("verified_providers", {}) if tenant else {}
+    )
+
+    out: list[ProviderOut] = []
+    for p in PROVIDERS:
+        stored = by_kind.get(p.credential_kind)
+        configured_via: Literal["env", "stored"] | None
+        if env_credentials(p.provider) is not None:
+            connected = True
+            configured_via = "env"
+            verified_at_raw = verified_providers.get(p.provider)
+            last_verified_at = (
+                datetime.fromisoformat(verified_at_raw) if verified_at_raw else None
+            )
+        elif stored is not None:
+            connected = True
+            configured_via = "stored"
+            last_verified_at = stored.last_verified_at
+        else:
+            connected = False
+            configured_via = None
+            last_verified_at = None
+
+        out.append(
+            ProviderOut(
+                provider=p.provider,
+                credential_kind=p.credential_kind,
+                label=p.label,
+                console_url=p.console_url,
+                supports_embeddings=p.supports_embeddings,
+                connected=connected,
+                last_verified_at=last_verified_at,
+                description=p.description,
+                requires_api_base=p.requires_api_base,
+                requires_api_key=p.requires_api_key,
+                api_base_hint=p.api_base_hint,
+                model_count=len(p.models),
+                allows_custom_model=p.allows_custom_model,
+                env_var=provider_key_var(p.provider),
+                env_base_var=provider_base_var(p.provider),
+                configured_via=configured_via,
+            )
         )
-        for p in PROVIDERS
+    return out
+
+
+@router.post("/providers/{provider}/test", response_model=ProviderTestOut)
+async def test_provider(
+    provider: str,
+    user: AuthContext = Depends(get_current_user),
+    db: AsyncSession = Depends(get_scoped_db),
+) -> ProviderTestOut:
+    """Verify whichever key is active for `provider` — env first, else stored.
+
+    Reuses `verify_credentials` (the same probe the stored-credential Test
+    button uses) rather than re-implementing the live call: `load_credentials`
+    already applies the env-first precedence, so this one probe covers both
+    sources.
+    """
+    spec = provider_spec(provider)
+    if spec is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail=f"unknown provider {provider!r}"
+        )
+
+    if env_credentials(provider) is None:
+        stored = (
+            await db.execute(
+                select(Credential)
+                .where(
+                    Credential.tenant_id == user.tenant_id,
+                    Credential.kind == spec.credential_kind,
+                )
+                .order_by(Credential.created_at.desc())
+                .limit(1)
+            )
+        ).scalar_one_or_none()
+        if stored is None:
+            raise MissingLLMCredentialsError(provider)
+
+    ok, message = await verify_credentials(db, tenant_id=user.tenant_id, provider=provider)
+    if ok:
+        tenant = await db.get(Tenant, user.tenant_id)
+        if tenant is not None:
+            # Reassign (rather than mutate in place) so SQLAlchemy detects the
+            # JSONB change and flushes it.
+            state = dict(tenant.onboarding_state or {})
+            verified = dict(state.get("verified_providers") or {})
+            verified[provider] = datetime.now(timezone.utc).isoformat()
+            state["verified_providers"] = verified
+            tenant.onboarding_state = state
+            await db.flush()
+        await write_audit_event(
+            db,
+            action="credential.provider.verified",
+            target_type="credential",
+            actor_kind="user",
+            actor_id=user.user_id,
+            payload={"provider": provider},
+        )
+    return ProviderTestOut(ok=ok, message=message)
+
+
+@router.get("/scraping", response_model=list[ScrapingKeyOut])
+async def list_scraping_keys(
+    user: AuthContext = Depends(get_current_user),
+    db: AsyncSession = Depends(get_scoped_db),
+) -> list[ScrapingKeyOut]:
+    """Every non-LLM integration kind and whether a secret (env or stored) is
+    available for it."""
+    secrets = await get_credential_secrets(
+        db, tenant_id=user.tenant_id, kinds=list(NON_LLM_KINDS)
+    )
+    return [
+        ScrapingKeyOut(
+            kind=kind,
+            env_var=scraping_key_var(kind),
+            configured=kind in secrets,
+        )
+        for kind in NON_LLM_KINDS
     ]

@@ -170,7 +170,14 @@ async def _handle_domain_error(request: Request, exc: OutreachError) -> JSONResp
         # The web app keys off this to route the user into onboarding.
         SetupRequiredError: status.HTTP_428_PRECONDITION_REQUIRED,
     }
-    code = status_map.get(type(exc), status.HTTP_400_BAD_REQUEST)
+    # Walk the MRO rather than an exact-type lookup: a raised subclass (e.g.
+    # MissingLLMCredentialsError -> SetupRequiredError) must still map to its
+    # base's status code, not silently fall through to a generic 400.
+    code = status.HTTP_400_BAD_REQUEST
+    for cls in type(exc).__mro__:
+        if cls in status_map:
+            code = status_map[cls]
+            break
     return JSONResponse(status_code=code, content={"detail": str(exc)})
 
 

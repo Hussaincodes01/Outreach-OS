@@ -22,7 +22,7 @@ from outreach_os.domain.models.icp import Icp
 from outreach_os.domain.models.lead import Lead
 from outreach_os.domain.models.mailbox import Mailbox
 from outreach_os.domain.models.tenant import Tenant
-from outreach_os.services.llm_credentials import PROVIDERS
+from outreach_os.services.llm_credentials import PROVIDERS, env_credentials
 
 # The tenant-scoped models this module counts. Spelled out rather than made
 # structural: SQLAlchemy exposes `Model.tenant_id` as an InstrumentedAttribute
@@ -88,6 +88,12 @@ async def get_status(
     )
     connected_llm = [c for c in creds if c.kind in llm_kinds]
     verified_llm = [c for c in connected_llm if c.last_verified_at is not None]
+    env_connected = [p for p in PROVIDERS if env_credentials(p.provider) is not None]
+    verified_providers = (tenant.onboarding_state or {}).get("verified_providers", {}) if tenant else {}
+    llm_key_done = bool(connected_llm) or bool(env_connected)
+    llm_verified_done = bool(verified_llm) or bool(verified_providers)
+    n_providers_connected = len(connected_llm) + len(env_connected)
+    n_providers_verified = len(verified_llm) + len(verified_providers)
 
     n_mailboxes = await _count(session, Mailbox, tenant_id)
     n_leads = await _count(session, Lead, tenant_id)
@@ -99,16 +105,18 @@ async def get_status(
             key="llm_key",
             title="Connect an AI provider",
             description=(
-                "Add your own API key. It is encrypted with a key unique to your "
-                "workspace, and every draft is billed to your provider account."
+                "Add your own API key under Settings, or set "
+                "<PROVIDER>_API_KEY in .env and restart the API. It is "
+                "encrypted with a key unique to your workspace, and every "
+                "draft is billed to your provider account."
             ),
-            done=bool(connected_llm),
+            done=llm_key_done,
             required=True,
             href="/integrations",
             detail=(
-                f"{len(connected_llm)} connected"
-                f"{f', {len(verified_llm)} verified' if connected_llm else ''}"
-                if connected_llm
+                f"{n_providers_connected} connected"
+                f"{f', {n_providers_verified} verified' if llm_key_done else ''}"
+                if llm_key_done
                 else "No provider connected yet"
             ),
         ),
@@ -116,12 +124,12 @@ async def get_status(
             key="llm_verified",
             title="Verify your API key",
             description="Run a live check so you find out now, not mid-campaign.",
-            done=bool(verified_llm),
+            done=llm_verified_done,
             required=False,
             href="/integrations",
             detail=(
                 "Key verified against the provider"
-                if verified_llm
+                if llm_verified_done
                 else "Not verified yet"
             ),
         ),

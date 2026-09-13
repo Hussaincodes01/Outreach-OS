@@ -41,17 +41,21 @@ os.environ.setdefault("INBOUND_WEBHOOK_SECRET", "test-webhook-secret")
 import uuid as _uuid
 
 import httpx
+import pytest
 import pytest_asyncio
 from fastapi import Header
 from sqlalchemy import text
 
 from outreach_os.api.deps import get_current_user
+from outreach_os.core import env_keys
 from outreach_os.core.audit import write_audit_event
 from outreach_os.core.db import dispose_engine, get_engine, get_session_factory, reset_for_tests
 from outreach_os.core.tenancy import set_tenant_for_session
 from outreach_os.domain.schemas.auth import AuthContext
 from outreach_os.main import app
+from outreach_os.services.llm_credentials import NON_LLM_KINDS, PROVIDERS
 from outreach_os.services.local_workspace import (
+    LOCAL_TENANT_ID,
     ensure_local_workspace,
     local_auth_context,
     reset_local_workspace_cache,
@@ -165,6 +169,36 @@ async def client() -> httpx.AsyncClient:
     transport = httpx.ASGITransport(app=app)
     async with httpx.AsyncClient(transport=transport, base_url="http://test") as c:
         yield c
+
+
+@pytest.fixture(autouse=True)
+def _clear_provider_env(monkeypatch: pytest.MonkeyPatch, tmp_path) -> None:
+    """Keys are now read from the environment / `.env`, so the developer's own
+    shell (which may export a real OPENAI_API_KEY etc.) must never leak into
+    the suite. Clear every provider/scraping env var the catalogue knows
+    about, and point `.env` lookup at an empty temp file so a real `.env` on
+    disk can't leak in either. Individual tests still `monkeypatch.setenv`
+    the specific var they want to exercise."""
+    for p in PROVIDERS:
+        monkeypatch.delenv(env_keys.provider_key_var(p.provider), raising=False)
+        monkeypatch.delenv(env_keys.provider_base_var(p.provider), raising=False)
+    for kind in NON_LLM_KINDS:
+        monkeypatch.delenv(env_keys.scraping_key_var(kind), raising=False)
+    monkeypatch.setattr(env_keys, "_dotenv_path", lambda: tmp_path / ".env")
+    env_keys.reset_env_cache()
+    yield
+    env_keys.reset_env_cache()
+
+
+@pytest_asyncio.fixture
+async def scoped_session():
+    """A session bound to the local workspace's tenant via RLS, for tests that
+    call service functions directly instead of going through the HTTP client."""
+    await ensure_local_workspace()
+    factory = get_session_factory()
+    async with factory() as session, session.begin():
+        await set_tenant_for_session(session, str(LOCAL_TENANT_ID))
+        yield session
 
 
 @pytest_asyncio.fixture(scope="session", autouse=True)
