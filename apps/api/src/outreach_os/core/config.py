@@ -4,13 +4,14 @@ Reads from environment / .env. All settings are validated at import time.
 """
 from __future__ import annotations
 
-import base64
 import json
 from functools import lru_cache
 from typing import Annotated, Literal
 
 from pydantic import Field, SecretStr, field_validator, model_validator
 from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
+
+from outreach_os.core.vault import decode_padded_urlsafe_b64
 
 
 class Settings(BaseSettings):
@@ -261,7 +262,7 @@ class Settings(BaseSettings):
             problems.append("VAULT_MASTER_KEY must be set (base64 Fernet key)")
         else:
             try:
-                if len(base64.urlsafe_b64decode(vault)) < 32:
+                if len(decode_padded_urlsafe_b64(vault)) < 32:
                     problems.append("VAULT_MASTER_KEY must decode to at least 32 bytes")
             except Exception:
                 problems.append("VAULT_MASTER_KEY must be valid base64")

@@ -24,12 +24,28 @@ class VaultError(Exception):
     pass
 
 
+def decode_padded_urlsafe_b64(raw: str) -> bytes:
+    """Base64url-decode `raw`, tolerating missing trailing `=` padding.
+
+    Some key-generation paths (Node's `Buffer.toString("base64url")`, a
+    value copy-pasted from a source that trims trailing `=`) produce an
+    unpadded base64url string. Padding is a framing detail -- it only tells
+    the decoder how many bits of the final byte group are significant -- not
+    part of the key material, so restoring it before decoding yields the
+    identical bytes as the padded spelling of the same key. Shared by
+    `core.config`'s production-safety check so both call sites treat the
+    same value the same way.
+    """
+    value = raw.strip()
+    return base64.urlsafe_b64decode(value + "=" * (-len(value) % 4))
+
+
 def _master_kek() -> bytes:
     raw = os.environ.get("VAULT_MASTER_KEY", "")
     if not raw:
         raise VaultError("VAULT_MASTER_KEY is not set")
     try:
-        decoded = base64.urlsafe_b64decode(raw)
+        decoded = decode_padded_urlsafe_b64(raw)
     except Exception as exc:
         raise VaultError("VAULT_MASTER_KEY must be base64-encoded") from exc
     if len(decoded) < 16:

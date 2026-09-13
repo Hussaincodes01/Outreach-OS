@@ -125,3 +125,17 @@ def test_short_vault_key_is_refused(monkeypatch: pytest.MonkeyPatch) -> None:
     )
     with pytest.raises(ValidationError, match="VAULT_MASTER_KEY"):
         Settings()
+
+
+def test_unpadded_vault_key_is_accepted(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A 32-byte urlsafe-base64 key missing its trailing '=' pad (e.g. from
+    Node's `Buffer.toString("base64url")`) must not be wrongly refused --
+    padding carries no key material, so the unpadded and padded spellings of
+    the same key decode to identical bytes. Regression: `_enforce_production_
+    safety` used a bare `base64.urlsafe_b64decode`, which raises on unpadded
+    input, so a production deployment with a perfectly valid but unpadded key
+    would fail to boot with "VAULT_MASTER_KEY must be valid base64"."""
+    unpadded = base64.urlsafe_b64encode(secrets.token_bytes(32)).decode().rstrip("=")
+    assert len(unpadded) == 43
+    _prod_env(monkeypatch, VAULT_MASTER_KEY=unpadded)
+    Settings()  # must not raise
