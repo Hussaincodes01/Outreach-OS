@@ -12,7 +12,7 @@ services:
       POSTGRES_PASSWORD: postgres
       POSTGRES_DB: postgres
     ports:
-      - "5432:5432"
+      - "5433:5432"
     volumes:
       - postgres-data:/var/lib/postgresql/data
       - ./postgres/initdb:/docker-entrypoint-initdb.d:ro
@@ -27,7 +27,7 @@ services:
     container_name: outreach-redis
     restart: unless-stopped
     ports:
-      - "6379:6379"
+      - "6380:6379"
     volumes:
       - redis-data:/data
     healthcheck:
@@ -37,7 +37,10 @@ services:
       retries: 10
 
   minio:
-    image: minio/minio:latest
+    # Docker Hub no longer serves minio/minio or minio/mc for anonymous pulls
+    # ("repository does not exist"); MinIO now publishes those images only to
+    # quay.io. Functionally identical images, different registry.
+    image: quay.io/minio/minio:latest
     container_name: outreach-minio
     restart: unless-stopped
     command: server /data --console-address ":9001"
@@ -56,7 +59,7 @@ services:
       retries: 10
 
   minio-init:
-    image: minio/mc:latest
+    image: quay.io/minio/mc:latest
     container_name: outreach-minio-init
     depends_on:
       minio:
@@ -68,13 +71,16 @@ services:
       mc anonymous set download local/outreach || true
       "
 
-  mailhog:
-    image: mailhog/mailhog:latest
-    container_name: outreach-mailhog
+  greenmail:
+    image: greenmail/standalone:2.1.2
+    container_name: outreach-greenmail
     restart: unless-stopped
+    environment:
+      # Accept any login; mailboxes are created on first delivery. Test-only server.
+      GREENMAIL_OPTS: "-Dgreenmail.setup.test.smtp -Dgreenmail.setup.test.imap -Dgreenmail.auth.disabled -Dgreenmail.hostname=0.0.0.0 -Dgreenmail.verbose"
     ports:
-      - "1025:1025"
-      - "8025:8025"
+      - "3025:3025"
+      - "3143:3143"
 
 volumes:
   postgres-data:

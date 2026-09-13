@@ -28,11 +28,11 @@ class Settings(BaseSettings):
 
     # --- Database ---
     database_url: str = Field(
-        default="postgresql+asyncpg://outreach:outreach@localhost:5432/outreach",
+        default="postgresql+asyncpg://outreach:outreach@localhost:5433/outreach",
         description="Async SQLAlchemy URL for the main app database.",
     )
     database_url_sync: str = Field(
-        default="postgresql://outreach:outreach@localhost:5432/outreach",
+        default="postgresql://outreach:outreach@localhost:5433/outreach",
         description="Sync URL (used by Alembic via async driver compatibility shim).",
     )
     database_pool_size: int = 10
@@ -51,9 +51,9 @@ class Settings(BaseSettings):
     cors_allowed_origins: Annotated[list[str], NoDecode] = Field(default_factory=list)
 
     # --- Redis / Celery ---
-    redis_url: str = "redis://localhost:6379/0"
-    celery_broker_url: str = "redis://localhost:6379/1"
-    celery_result_backend: str = "redis://localhost:6379/2"
+    redis_url: str = "redis://localhost:6380/0"
+    celery_broker_url: str = "redis://localhost:6380/1"
+    celery_result_backend: str = "redis://localhost:6380/2"
 
     # --- Auth ---
     jwt_secret: SecretStr = Field(default=SecretStr("change-me"))

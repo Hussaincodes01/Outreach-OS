@@ -13,7 +13,7 @@ import os
 os.environ.setdefault("ENVIRONMENT", "test")
 os.environ.setdefault(
     "DATABASE_URL",
-    "postgresql+asyncpg://outreach:outreach@localhost:5432/outreach_test",
+    "postgresql+asyncpg://outreach:outreach@localhost:5433/outreach_test",
 )
 os.environ.setdefault(
     "TEST_DATABASE_URL",
@@ -23,13 +23,13 @@ os.environ.setdefault(
 # above (the non-superuser) so RLS is enforced under test.
 os.environ.setdefault(
     "DATABASE_URL_ADMIN",
-    "postgresql+asyncpg://postgres:postgres@localhost:5432/outreach_test",
+    "postgresql+asyncpg://postgres:postgres@localhost:5433/outreach_test",
 )
 os.environ.setdefault("VAULT_MASTER_KEY", "2QU3n0T0Q3n0T0Q3n0T0Q3n0T0Q3n0T0Q3n0T0Q3n0Q=")
 os.environ.setdefault("JWT_SECRET", "test-jwt-secret-not-for-production-use-please")
-os.environ.setdefault("REDIS_URL", "redis://localhost:6379/15")
-os.environ.setdefault("CELERY_BROKER_URL", "redis://localhost:6379/15")
-os.environ.setdefault("CELERY_RESULT_BACKEND", "redis://localhost:6379/15")
+os.environ.setdefault("REDIS_URL", "redis://localhost:6380/15")
+os.environ.setdefault("CELERY_BROKER_URL", "redis://localhost:6380/15")
+os.environ.setdefault("CELERY_RESULT_BACKEND", "redis://localhost:6380/15")
 # Run Celery tasks synchronously in-process so tests don't need a worker.
 os.environ.setdefault("CELERY_TASK_ALWAYS_EAGER", "true")
 # Disable auth rate limits in tests (or set very high)

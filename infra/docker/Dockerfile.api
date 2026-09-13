@@ -20,10 +20,6 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libpq-dev \
     && rm -rf /var/lib/apt/lists/*
 
-# The package metadata declares `readme = "../../README.md"`, so the build
-# needs the repo-root README *and* the full apps/api source tree (hatchling
-# builds the wheel from src/outreach_os). Preserve the monorepo layout.
-COPY README.md ./README.md
 COPY apps/api ./apps/api
 
 RUN pip install --upgrade pip && \
