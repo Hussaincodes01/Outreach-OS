@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Mail, Plus, Trash2, Send } from "lucide-react";
+import { Plus, Trash2, Send } from "lucide-react";
 import { toast } from "sonner";
 import { api } from "@/lib/api-client";
 import { Button } from "@/components/ui/button";
@@ -41,12 +41,28 @@ export default function MailboxesPage() {
   const [email, setEmail] = useState("");
   const [useTls, setUseTls] = useState(true);
 
+  const [imapHost, setImapHost] = useState("");
+  const [imapPort, setImapPort] = useState(993);
+  const [imapUseSsl, setImapUseSsl] = useState(true);
+
   const [testTo, setTestTo] = useState("");
 
   const list = useQuery({
     queryKey: ["mailboxes"],
     queryFn: () => api.listMailboxes(),
   });
+
+  const resetForm = () => {
+    setHost("");
+    setPort(587);
+    setUsername("");
+    setPassword("");
+    setEmail("");
+    setUseTls(true);
+    setImapHost("");
+    setImapPort(993);
+    setImapUseSsl(true);
+  };
 
   const addSmtp = useMutation({
     mutationFn: () =>
@@ -58,27 +74,15 @@ export default function MailboxesPage() {
         email_address: email,
         use_tls: useTls,
         daily_send_cap: 50,
+        imap_host: imapHost.trim() ? imapHost.trim() : null,
+        imap_port: imapPort,
+        imap_use_ssl: imapUseSsl,
       }),
     onSuccess: () => {
       toast.success("SMTP mailbox connected");
       setSmtpOpen(false);
+      resetForm();
       queryClient.invalidateQueries({ queryKey: ["mailboxes"] });
-    },
-    onError: (err: Error) => toast.error(err.message),
-  });
-
-  const gmailStart = useMutation({
-    mutationFn: () => api.gmailOAuthStart(),
-    onSuccess: (res) => {
-      window.location.href = res.auth_url;
-    },
-    onError: (err: Error) => toast.error(err.message),
-  });
-
-  const outlookStart = useMutation({
-    mutationFn: () => api.outlookOAuthStart(),
-    onSuccess: (res) => {
-      window.location.href = res.auth_url;
     },
     onError: (err: Error) => toast.error(err.message),
   });
@@ -109,27 +113,18 @@ export default function MailboxesPage() {
         <div>
           <h1 className="text-2xl font-semibold tracking-tight">Mailboxes</h1>
           <p className="text-muted-foreground">
-            Connect a sending account. OAuth flows use your own mailbox — we never store your password.
+            Connect an SMTP sending account. We never store your password
+            anywhere but the encrypted mailbox record.
           </p>
         </div>
         <div className="flex gap-2">
-          <Button
-            variant="outline"
-            onClick={() => gmailStart.mutate()}
-            disabled={gmailStart.isPending}
+          <Dialog
+            open={smtpOpen}
+            onOpenChange={(o) => {
+              setSmtpOpen(o);
+              if (!o) resetForm();
+            }}
           >
-            <Mail className="mr-2 h-4 w-4" />
-            Connect Gmail
-          </Button>
-          <Button
-            variant="outline"
-            onClick={() => outlookStart.mutate()}
-            disabled={outlookStart.isPending}
-          >
-            <Mail className="mr-2 h-4 w-4" />
-            Connect Outlook
-          </Button>
-          <Dialog open={smtpOpen} onOpenChange={setSmtpOpen}>
             <DialogTrigger asChild>
               <Button>
                 <Plus className="mr-2 h-4 w-4" />
@@ -206,6 +201,50 @@ export default function MailboxesPage() {
                   />
                   Use STARTTLS
                 </label>
+
+                <div className="space-y-3 rounded-md border p-3">
+                  <p className="text-sm font-medium">Receive replies (IMAP)</p>
+                  <p className="text-xs text-muted-foreground">
+                    Optional. Leave the host blank to send only — replies will
+                    need a webhook instead.
+                  </p>
+                  <div className="grid grid-cols-2 gap-3">
+                    <div className="space-y-1.5">
+                      <Label htmlFor="imap_host">IMAP host</Label>
+                      <Input
+                        id="imap_host"
+                        value={imapHost}
+                        onChange={(e) => setImapHost(e.target.value)}
+                        placeholder="imap.example.com"
+                      />
+                    </div>
+                    <div className="space-y-1.5">
+                      <Label htmlFor="imap_port">IMAP port</Label>
+                      <Input
+                        id="imap_port"
+                        type="number"
+                        value={imapPort}
+                        onChange={(e) => setImapPort(parseInt(e.target.value, 10))}
+                      />
+                    </div>
+                  </div>
+                  <label className="flex items-center gap-2 text-sm">
+                    <input
+                      type="checkbox"
+                      checked={imapUseSsl}
+                      onChange={(e) => setImapUseSsl(e.target.checked)}
+                    />
+                    Use SSL
+                  </label>
+                </div>
+
+                <p className="text-xs text-muted-foreground">
+                  Gmail: <code>smtp.gmail.com:587</code> and{" "}
+                  <code>imap.gmail.com:993</code> with an app password.
+                  Outlook: <code>smtp.office365.com:587</code> and{" "}
+                  <code>outlook.office365.com:993</code>.
+                </p>
+
                 <DialogFooter>
                   <Button
                     type="button"
@@ -234,9 +273,12 @@ export default function MailboxesPage() {
         </CardHeader>
         <CardContent>
           {list.isLoading && <p className="text-sm text-muted-foreground">Loading…</p>}
+          {list.isError && (
+            <p className="text-sm text-destructive">Couldn&apos;t load mailboxes.</p>
+          )}
           {list.data && list.data.length === 0 && (
             <p className="text-sm text-muted-foreground">
-              No mailboxes yet. Connect one to start sending in Phase 4.
+              No mailboxes yet. Add one to start sending.
             </p>
           )}
           {list.data && list.data.length > 0 && (
@@ -246,6 +288,7 @@ export default function MailboxesPage() {
                   <TableHead>Provider</TableHead>
                   <TableHead>Email</TableHead>
                   <TableHead>Cap / day</TableHead>
+                  <TableHead>Replies</TableHead>
                   <TableHead>Connected</TableHead>
                   <TableHead className="w-40 text-right">Actions</TableHead>
                 </TableRow>
@@ -258,6 +301,11 @@ export default function MailboxesPage() {
                     </TableCell>
                     <TableCell>{m.email_address}</TableCell>
                     <TableCell>{m.daily_send_cap}</TableCell>
+                    <TableCell>
+                      <Badge variant={m.imap_enabled ? "default" : "outline"}>
+                        {m.imap_enabled ? "Replies: IMAP" : "Replies: webhook only"}
+                      </Badge>
+                    </TableCell>
                     <TableCell className="text-muted-foreground">
                       {formatDate(m.created_at)}
                     </TableCell>

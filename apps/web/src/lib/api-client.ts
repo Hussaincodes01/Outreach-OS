@@ -62,6 +62,17 @@ export interface ProviderOut {
   api_base_hint: string | null;
   model_count: number;
   allows_custom_model: boolean;
+  /** The .env variable to set for the key, and for the base URL when required. */
+  env_var: string;
+  env_base_var: string;
+  /** How this provider got configured: an .env var, an older DB-stored key, or nothing. */
+  configured_via: "env" | "stored" | null;
+}
+
+export interface ScrapingKeyOut {
+  kind: "serper" | "proxycurl" | "rapidapi" | "scrapingbee";
+  env_var: string;
+  configured: boolean;
 }
 
 export interface OnboardingStepOut {
@@ -121,6 +132,8 @@ export interface MailboxOut {
   is_active: boolean;
   daily_send_cap: number;
   created_at: string;
+  /** True only when this mailbox has an IMAP host configured for reply capture. */
+  imap_enabled: boolean;
 }
 
 export interface AuditEventOut {
@@ -745,30 +758,20 @@ export const api = {
   async listCredentials(): Promise<CredentialOut[]> {
     return request<CredentialOut[]>("/v1/credentials");
   },
-  async createCredential(input: {
-    kind: string;
-    label: string;
-    secret_payload: Record<string, unknown>;
-  }): Promise<CredentialOut> {
-    return request<CredentialOut>("/v1/credentials", {
-      method: "POST",
-      body: JSON.stringify(input),
-    });
-  },
-  async deleteCredential(id: string): Promise<void> {
-    return request<void>(`/v1/credentials/${id}`, { method: "DELETE" });
-  },
-  async testCredential(
-    id: string
-  ): Promise<{ ok: boolean; message: string; verified_live: boolean }> {
-    return request<{ ok: boolean; message: string; verified_live: boolean }>(
-      `/v1/credentials/${id}/test`,
-      { method: "POST" }
-    );
-  },
   /** The connectable providers, and whether this workspace has wired each up. */
   async listProviders(): Promise<ProviderOut[]> {
     return request<ProviderOut[]>("/v1/credentials/providers");
+  },
+  /** Makes a live call to the provider using whatever key is configured via .env. */
+  async testProvider(provider: string): Promise<{ ok: boolean; message: string }> {
+    return request<{ ok: boolean; message: string }>(
+      `/v1/credentials/providers/${provider}/test`,
+      { method: "POST" }
+    );
+  },
+  /** Lead-data / scraping keys, which are .env-only (no stored credential). */
+  async scrapingKeys(): Promise<ScrapingKeyOut[]> {
+    return request<ScrapingKeyOut[]>("/v1/credentials/scraping");
   },
 
   // -- onboarding --
@@ -801,16 +804,6 @@ export const api = {
   async deleteMailbox(id: string): Promise<void> {
     return request<void>(`/v1/mailboxes/${id}`, { method: "DELETE" });
   },
-  async gmailOAuthStart(): Promise<{ auth_url: string; state: string }> {
-    return request<{ auth_url: string; state: string }>(
-      "/v1/mailboxes/oauth/gmail/start"
-    );
-  },
-  async outlookOAuthStart(): Promise<{ auth_url: string; state: string }> {
-    return request<{ auth_url: string; state: string }>(
-      "/v1/mailboxes/oauth/outlook/start"
-    );
-  },
   async createSmtpMailbox(input: {
     host: string;
     port: number;
@@ -819,6 +812,9 @@ export const api = {
     email_address: string;
     use_tls: boolean;
     daily_send_cap: number;
+    imap_host?: string | null;
+    imap_port?: number;
+    imap_use_ssl?: boolean;
   }): Promise<MailboxOut> {
     return request<MailboxOut>("/v1/mailboxes/smtp", {
       method: "POST",
