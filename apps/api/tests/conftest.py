@@ -32,24 +32,46 @@ os.environ.setdefault("CELERY_BROKER_URL", "redis://localhost:6380/15")
 os.environ.setdefault("CELERY_RESULT_BACKEND", "redis://localhost:6380/15")
 # Run Celery tasks synchronously in-process so tests don't need a worker.
 os.environ.setdefault("CELERY_TASK_ALWAYS_EAGER", "true")
-# Disable auth rate limits in tests (or set very high)
-# Every test shares one client IP, so production limits would make the suite
-# fail on volume rather than behaviour. `password_reset` is included because it
-# defaults to a deliberately tight 3/min.
-os.environ.setdefault(
-    "AUTH_RATE_LIMITS_PER_MINUTE",
-    '{"login": 10000, "signup": 10000, "refresh": 10000, "webhook": 10000,'
-    ' "password_reset": 10000}',
-)
+# Every test shares one client IP, so the production webhook limit would make
+# the suite fail on volume rather than behaviour.
+os.environ.setdefault("AUTH_RATE_LIMITS_PER_MINUTE", '{"webhook": 10000}')
 # Set inbound webhook secret for tests
 os.environ.setdefault("INBOUND_WEBHOOK_SECRET", "test-webhook-secret")
 
+import uuid as _uuid
+
 import httpx
 import pytest_asyncio
+from fastapi import Header
 from sqlalchemy import text
 
-from outreach_os.core.db import dispose_engine, get_engine, reset_for_tests
+from outreach_os.api.deps import get_current_user
+from outreach_os.core.audit import write_audit_event
+from outreach_os.core.db import dispose_engine, get_engine, get_session_factory, reset_for_tests
+from outreach_os.core.tenancy import set_tenant_for_session
+from outreach_os.domain.schemas.auth import AuthContext
 from outreach_os.main import app
+from outreach_os.services.local_workspace import (
+    ensure_local_workspace,
+    local_auth_context,
+    reset_local_workspace_cache,
+)
+
+
+async def _test_current_user(x_test_auth: str | None = Header(default=None)) -> AuthContext:
+    """Test-only: act as the tenant encoded in X-Test-Auth, else the local workspace.
+
+    Production has no way to pick a tenant; tests need one so they can keep
+    proving cross-tenant RLS isolation.
+    """
+    if not x_test_auth:
+        await ensure_local_workspace()
+        return local_auth_context()
+    tenant_id, user_id, role = x_test_auth.split(":")
+    return AuthContext(user_id=_uuid.UUID(user_id), tenant_id=_uuid.UUID(tenant_id), role=role)
+
+
+app.dependency_overrides[get_current_user] = _test_current_user
 
 
 @pytest_asyncio.fixture(scope="session", autouse=True)
@@ -178,6 +200,7 @@ async def _truncate() -> None:
                 "RESTART IDENTITY CASCADE"
             )
         )
+    reset_local_workspace_cache()
 
 
 @pytest_asyncio.fixture
@@ -198,7 +221,7 @@ async def _dispose() -> None:
 
 
 def bearer(token: str) -> dict[str, str]:
-    return {"Authorization": f"Bearer {token}"}
+    return {"X-Test-Auth": token}
 
 
 async def signup(
@@ -209,16 +232,53 @@ async def signup(
     tenant_name: str,
     tenant_slug: str | None = None,
 ) -> dict:
-    body: dict[str, str] = {
-        "email": email,
-        "password": password,
-        "tenant_name": tenant_name,
+    """Create an extra tenant + owner directly in the DB (there is no signup route).
+
+    `password` is accepted for call-site compatibility and ignored. The
+    tenant.created / user.signed_up audit events the old signup route wrote
+    are kept, because audit-chain tests rely on a tenant having audit rows.
+    """
+    tenant_id = _uuid.uuid4()
+    user_id = _uuid.uuid4()
+    slug = tenant_slug or f"t-{tenant_id.hex[:10]}"
+    factory = get_session_factory()
+    async with factory() as session, session.begin():
+        await session.execute(
+            text("INSERT INTO tenant (id, slug, name) VALUES (:id, :slug, :name)"),
+            {"id": tenant_id, "slug": slug, "name": tenant_name},
+        )
+        await set_tenant_for_session(session, str(tenant_id))
+        await session.execute(
+            text(
+                "INSERT INTO app_user (id, tenant_id, email, password_hash, role) "
+                "VALUES (:id, :tid, :email, '!', 'owner')"
+            ),
+            {"id": user_id, "tid": tenant_id, "email": email},
+        )
+        await write_audit_event(
+            session,
+            action="tenant.created",
+            target_type="tenant",
+            target_id=tenant_id,
+            actor_kind="system",
+            payload={"name": tenant_name, "slug": slug},
+        )
+        await write_audit_event(
+            session,
+            action="user.signed_up",
+            target_type="user",
+            target_id=user_id,
+            actor_kind="user",
+            actor_id=user_id,
+            payload={"tenant_slug": slug},
+        )
+    token = f"{tenant_id}:{user_id}:owner"
+    return {
+        "access_token": token,
+        "refresh_token": token,
+        "user_id": str(user_id),
+        "tenant_id": str(tenant_id),
     }
-    if tenant_slug:
-        body["tenant_slug"] = tenant_slug
-    resp = await client.post("/v1/auth/signup", json=body)
-    assert resp.status_code == 201, resp.text
-    return resp.json()
 
 
 def make_email(local: str, domain: str = "example.com") -> str:
@@ -228,6 +288,4 @@ def make_email(local: str, domain: str = "example.com") -> str:
 
 def unique_email(domain: str = "example.com") -> str:
     """Build a unique email per call (good for test isolation)."""
-    import uuid as _uuid
-
     return f"u-{_uuid.uuid4().hex[:8]}@{domain}"

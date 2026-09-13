@@ -55,15 +55,11 @@ class Settings(BaseSettings):
     celery_broker_url: str = "redis://localhost:6380/1"
     celery_result_backend: str = "redis://localhost:6380/2"
 
-    # --- Auth ---
+    # --- OAuth state signing ---
+    # Signs the short-lived `state` token of the Gmail/Outlook mailbox OAuth
+    # flows only. There is no user authentication.
     jwt_secret: SecretStr = Field(default=SecretStr("change-me"))
-    # JSON dict of kid->secret for key rotation, e.g. '{"1": "secret1", "2": "secret2"}'
-    jwt_secret_keys: SecretStr | None = None
-    # Active key ID for signing new tokens (must exist in jwt_secret_keys)
-    jwt_active_key_id: str = "1"
     jwt_alg: str = "HS256"
-    jwt_access_ttl_minutes: int = 15
-    jwt_refresh_ttl_days: int = 30
 
     # --- Vault ---
     # 32-byte Fernet key, base64-encoded. Generate with `openssl rand -base64 32`.
@@ -88,16 +84,6 @@ class Settings(BaseSettings):
         "http://localhost:8000/v1/mailboxes/oauth/outlook/callback"
     )
     microsoft_oauth_tenant: str = "common"
-    # Separate redirect URIs for SIGN-IN, distinct from the mailbox-connection
-    # callbacks above. Signing in requests identity scopes only; connecting a
-    # mailbox requests send/read. Keeping the callbacks apart means an
-    # authorization code minted for one flow cannot satisfy the other.
-    google_login_redirect_uri: str = (
-        "http://localhost:8000/v1/auth/oauth/google/callback"
-    )
-    microsoft_login_redirect_uri: str = (
-        "http://localhost:8000/v1/auth/oauth/microsoft/callback"
-    )
     microsoft_oauth_scopes: str = (
         "offline_access "
         "https://graph.microsoft.com/Mail.Send "
@@ -129,9 +115,6 @@ class Settings(BaseSettings):
     # Public URL of the WEB app (not the API). Reset and verification links
     # point here, so it has to be where the user's browser can reach the UI.
     web_base_url: str = "http://localhost:3000"
-    # Lifetime of password-reset and email-verification links.
-    password_reset_ttl_minutes: int = 60
-    email_verification_ttl_hours: int = 48
 
     # --- Phase 2: Lead scraping ---
     # Per-tenant, per-source rate limits (requests per minute). Source names
@@ -223,7 +206,7 @@ class Settings(BaseSettings):
     # Inbound webhook shared secret (HMAC-SHA256 over the body).
     # MUST be set in production .env (no default for security).
     inbound_webhook_secret: str = ""
-    # Auth rate limits (per IP per minute). Override via env.
+    # Per-IP rate limits (per minute) for public endpoints, e.g. {"webhook": 100}.
     auth_rate_limits_per_minute: dict[str, int] = Field(default_factory=dict)
 
     # --- Phase 5: meeting booking + CRM sync ---
@@ -307,10 +290,6 @@ class Settings(BaseSettings):
             return self
 
         problems: list[str] = []
-
-        jwt = self.jwt_secret.get_secret_value()
-        if not jwt or jwt in ("change-me", "change-me-to-a-long-random-string") or len(jwt) < 16:
-            problems.append("JWT_SECRET must be set to a strong (>= 16 char) random value")
 
         vault = self.vault_master_key.get_secret_value()
         if not vault:

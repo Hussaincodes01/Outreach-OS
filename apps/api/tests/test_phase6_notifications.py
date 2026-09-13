@@ -24,7 +24,6 @@ from httpx import ASGITransport, AsyncClient
 from sqlalchemy import select, text
 
 from outreach_os.core.audit import write_audit_event
-from outreach_os.core.auth import create_access_token
 from outreach_os.core.db import session_scope
 from outreach_os.core.mailer import StubMailer, set_mailer_client
 from outreach_os.core.slack_client import StubSlackClient, set_slack_client
@@ -76,18 +75,16 @@ async def _make_user_with_tenant() -> tuple[uuid.UUID, uuid.UUID, str]:
         session.add(tenant)
         await session.flush()
         await set_tenant_for_session(session, str(tenant.id))
-        from outreach_os.core.auth import hash_password
-
         user = AppUser(
             tenant_id=tenant.id,
             email=f"owner-{suffix}@example.test",
-            password_hash=hash_password("pw-12345-AbCde"),
+            password_hash="!",
             role=UserRole.OWNER.value,
         )
         session.add(user)
         await session.flush()
         tid, uid = tenant.id, user.id
-    token = create_access_token(user_id=str(uid), tenant_id=str(tid), role="owner")
+    token = f"{tid}:{uid}:owner"
     return tid, uid, token
 
 
@@ -107,7 +104,7 @@ async def test_audit_json_export_streams_all_rows(stub_ws):
     async with AsyncClient(transport=transport, base_url="http://test") as ac:
         r = await ac.get(
             "/v1/audit/export.json",
-            headers={"Authorization": f"Bearer {token}"},
+            headers={"X-Test-Auth": token},
         )
     assert r.status_code == 200
     body = r.text.strip().splitlines()
@@ -136,7 +133,7 @@ async def test_audit_csv_export_streams_all_rows(stub_ws):
     async with AsyncClient(transport=transport, base_url="http://test") as ac:
         r = await ac.get(
             "/v1/audit/export.csv",
-            headers={"Authorization": f"Bearer {token}"},
+            headers={"X-Test-Auth": token},
         )
     assert r.status_code == 200
     assert "text/csv" in r.headers["content-type"]
@@ -228,7 +225,7 @@ async def test_notification_list_unread_count(stub_ws, stub_slack):
     async with AsyncClient(transport=transport, base_url="http://test") as ac:
         r = await ac.get(
             "/v1/notifications",
-            headers={"Authorization": f"Bearer {token}"},
+            headers={"X-Test-Auth": token},
         )
         assert r.status_code == 200
         page = r.json()
@@ -237,7 +234,7 @@ async def test_notification_list_unread_count(stub_ws, stub_slack):
         assert len(page["items"]) == 4
         r2 = await ac.get(
             "/v1/notifications/unread_count",
-            headers={"Authorization": f"Bearer {token}"},
+            headers={"X-Test-Auth": token},
         )
         assert r2.json() == {"unread": 4}
         # Mark the first 2 as read.
@@ -245,13 +242,13 @@ async def test_notification_list_unread_count(stub_ws, stub_slack):
         r3 = await ac.post(
             "/v1/notifications/mark_read",
             json={"ids": ids},
-            headers={"Authorization": f"Bearer {token}"},
+            headers={"X-Test-Auth": token},
         )
         assert r3.status_code == 200
         assert r3.json() == {"updated": 2}
         r4 = await ac.get(
             "/v1/notifications",
-            headers={"Authorization": f"Bearer {token}"},
+            headers={"X-Test-Auth": token},
         )
         page2 = r4.json()
         assert page2["unread"] == 2
@@ -264,7 +261,7 @@ async def test_notification_event_keys_endpoint(stub_ws, stub_slack):
     async with AsyncClient(transport=transport, base_url="http://test") as ac:
         r = await ac.get(
             "/v1/notifications/events",
-            headers={"Authorization": f"Bearer {token}"},
+            headers={"X-Test-Auth": token},
         )
     assert r.status_code == 200
     events = r.json()["events"]
@@ -284,7 +281,7 @@ async def test_preference_upsert(stub_ws, stub_slack):
         # Initially empty.
         r0 = await ac.get(
             "/v1/notification-preferences",
-            headers={"Authorization": f"Bearer {token}"},
+            headers={"X-Test-Auth": token},
         )
         assert r0.json()["items"] == []
         # Upsert one.
@@ -296,7 +293,7 @@ async def test_preference_upsert(stub_ws, stub_slack):
                 "channel_email_digest": True,
                 "channel_slack": False,
             },
-            headers={"Authorization": f"Bearer {token}"},
+            headers={"X-Test-Auth": token},
         )
         assert r1.status_code == 200
         assert r1.json()["event_key"] == "reply.positive"
@@ -310,14 +307,14 @@ async def test_preference_upsert(stub_ws, stub_slack):
                 "channel_email_digest": False,
                 "channel_slack": True,
             },
-            headers={"Authorization": f"Bearer {token}"},
+            headers={"X-Test-Auth": token},
         )
         assert r2.json()["channel_email_digest"] is False
         assert r2.json()["channel_slack"] is True
         # Now the list returns the one row.
         r3 = await ac.get(
             "/v1/notification-preferences",
-            headers={"Authorization": f"Bearer {token}"},
+            headers={"X-Test-Auth": token},
         )
         assert len(r3.json()["items"]) == 1
 
@@ -397,7 +394,7 @@ async def test_slack_webhook_crud(stub_ws, stub_slack):
                 "webhook_url": "https://hooks.slack.com/services/T0/B0/YYY",
                 "channel": "#alerts",
             },
-            headers={"Authorization": f"Bearer {token}"},
+            headers={"X-Test-Auth": token},
         )
         assert r.status_code == 201
         h = r.json()
@@ -408,30 +405,30 @@ async def test_slack_webhook_crud(stub_ws, stub_slack):
         # List
         r2 = await ac.get(
             "/v1/slack-webhooks",
-            headers={"Authorization": f"Bearer {token}"},
+            headers={"X-Test-Auth": token},
         )
         assert len(r2.json()) == 1
         # Pause
         r3 = await ac.post(
             f"/v1/slack-webhooks/{hid}/pause",
-            headers={"Authorization": f"Bearer {token}"},
+            headers={"X-Test-Auth": token},
         )
         assert r3.json()["status"] == "paused"
         # Resume
         r4 = await ac.post(
             f"/v1/slack-webhooks/{hid}/resume",
-            headers={"Authorization": f"Bearer {token}"},
+            headers={"X-Test-Auth": token},
         )
         assert r4.json()["status"] == "active"
         # Delete
         r5 = await ac.delete(
             f"/v1/slack-webhooks/{hid}",
-            headers={"Authorization": f"Bearer {token}"},
+            headers={"X-Test-Auth": token},
         )
         assert r5.status_code == 204
         r6 = await ac.get(
             "/v1/slack-webhooks",
-            headers={"Authorization": f"Bearer {token}"},
+            headers={"X-Test-Auth": token},
         )
         assert r6.json() == []
 
@@ -505,11 +502,11 @@ async def test_notifications_isolated_by_tenant(stub_ws, stub_slack):
     async with AsyncClient(transport=transport, base_url="http://test") as ac:
         r_a = await ac.get(
             "/v1/notifications",
-            headers={"Authorization": f"Bearer {tok_a}"},
+            headers={"X-Test-Auth": tok_a},
         )
         r_b = await ac.get(
             "/v1/notifications",
-            headers={"Authorization": f"Bearer {tok_b}"},
+            headers={"X-Test-Auth": tok_b},
         )
     assert r_a.json()["total"] == 1
     assert r_b.json()["total"] == 0

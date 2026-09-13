@@ -21,7 +21,6 @@ import pytest_asyncio
 from httpx import ASGITransport, AsyncClient
 from sqlalchemy import select, text
 
-from outreach_os.core.auth import create_access_token, hash_password
 from outreach_os.core.billing_client import StubBillingClient, set_billing_client
 from outreach_os.core.db import session_scope
 from outreach_os.core.tenancy import set_tenant_for_session
@@ -56,13 +55,13 @@ async def _make_tenant(slug_suffix: str | None = None) -> tuple[uuid.UUID, uuid.
         user = AppUser(
             tenant_id=tenant.id,
             email=f"u-{suffix}@example.test",
-            password_hash=hash_password("pw-12345-AbCde"),
+            password_hash="!",
             role=UserRole.OWNER.value,
         )
         session.add(user)
         await session.flush()
         tid, uid = tenant.id, user.id
-    token = create_access_token(user_id=str(uid), tenant_id=str(tid), role="owner")
+    token = f"{tid}:{uid}:owner"
     return tid, uid, token
 
 
@@ -81,7 +80,7 @@ async def test_no_subscription_returns_none(stub_billing):
     _tid, _uid, token = await _make_tenant()
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://test") as ac:
-        r = await ac.get("/v1/billing/subscription", headers={"Authorization": f"Bearer {token}"})
+        r = await ac.get("/v1/billing/subscription", headers={"X-Test-Auth": token})
     assert r.status_code == 200
     assert r.json() is None
 
@@ -91,7 +90,7 @@ async def test_usage_summary(stub_billing):
     _tid, _uid, token = await _make_tenant()
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://test") as ac:
-        r = await ac.get("/v1/billing/usage", headers={"Authorization": f"Bearer {token}"})
+        r = await ac.get("/v1/billing/usage", headers={"X-Test-Auth": token})
     assert r.status_code == 200
     data = r.json()
     # starter defaults from the migration.
@@ -108,7 +107,7 @@ async def test_checkout_returns_stub_url(stub_billing):
         r = await ac.post(
             "/v1/billing/checkout",
             json={"plan_code": "growth"},
-            headers={"Authorization": f"Bearer {token}"},
+            headers={"X-Test-Auth": token},
         )
     assert r.status_code == 200
     data = r.json()
@@ -136,7 +135,7 @@ async def test_stub_webhook_creates_subscription(stub_billing):
     assert r.json()["processed"] is True
     # Now the subscription should show up.
     async with AsyncClient(transport=transport, base_url="http://test") as ac:
-        r2 = await ac.get("/v1/billing/subscription", headers={"Authorization": f"Bearer {token}"})
+        r2 = await ac.get("/v1/billing/subscription", headers={"X-Test-Auth": token})
     sub = r2.json()
     assert sub is not None
     assert sub["plan"]["code"] == "growth"
@@ -157,7 +156,7 @@ async def test_checkout_then_webhook_then_portal(stub_billing):
         r = await ac.post(
             "/v1/billing/checkout",
             json={"plan_code": "scale"},
-            headers={"Authorization": f"Bearer {token}"},
+            headers={"X-Test-Auth": token},
         )
         checkout_url = r.json()["checkout_url"]
         session_id = checkout_url.split("session=")[-1]
@@ -175,7 +174,7 @@ async def test_checkout_then_webhook_then_portal(stub_billing):
         )
         assert r.status_code == 200
         # 3. open portal
-        r = await ac.post("/v1/billing/portal", json={}, headers={"Authorization": f"Bearer {token}"})
+        r = await ac.post("/v1/billing/portal", json={}, headers={"X-Test-Auth": token})
         assert r.status_code == 200
         portal = r.json()
         assert portal["token"] is not None

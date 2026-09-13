@@ -2,8 +2,7 @@
 
 Provides:
 - Per-tenant, per-source limits for scraping (serper, company_site, linkedin_proxycurl)
-- Global IP-based limits for auth endpoints (login, signup, refresh)
-- Global IP-based limits for webhooks
+- Global IP-based limits for public webhooks
 
 Returns a `RateLimitDecision` with `allowed`, `current`, `limit`, `retry_after_seconds`.
 """
@@ -23,14 +22,7 @@ SCRAPE_DEFAULTS: Final[dict[str, int]] = {
 }
 
 AUTH_DEFAULTS: Final[dict[str, int]] = {
-    "login": 10,        # 10 login attempts per minute per IP
-    "signup": 5,        # 5 signups per minute per IP
-    "refresh": 30,      # 30 refreshes per minute per IP
     "webhook": 100,     # 100 webhook calls per minute per IP
-    # Deliberately tight: this endpoint sends mail to an address the caller
-    # supplies, so a loose limit turns it into a way to spam a third party
-    # from our domain and burn our sending reputation.
-    "password_reset": 3,
 }
 
 
@@ -57,7 +49,7 @@ def limit_for(source: str) -> int:
 
 
 def auth_limit_for(source: str) -> int:
-    """Return the configured per-minute cap for an auth endpoint."""
+    """Return the configured per-minute cap for a per-IP (public) endpoint."""
     settings = get_settings()
     override = settings.auth_rate_limits_per_minute.get(source)
     if override is not None:
@@ -89,7 +81,7 @@ def check_and_consume(tenant_id: str, source: str, *, limit: int | None = None) 
 
 
 def check_and_consume_ip(ip: str, source: str, *, limit: int | None = None) -> RateLimitDecision:
-    """Auth/webhook rate limit (per IP)."""
+    """Webhook rate limit (per IP)."""
     import time
 
     cap = limit if limit is not None else auth_limit_for(source)

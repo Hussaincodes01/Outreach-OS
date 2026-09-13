@@ -13,7 +13,6 @@ from fastapi.responses import JSONResponse
 from outreach_os.api.v1 import (
     admin,
     audit,
-    auth,
     billing,
     campaigns,
     credentials,
@@ -38,7 +37,6 @@ from outreach_os.api.v1 import (
     suppressions,
     tenants,
     tracking,
-    users,
 )
 from outreach_os.core.config import get_settings
 from outreach_os.core.db import dispose_engine
@@ -53,6 +51,7 @@ from outreach_os.core.errors import (
     ValidationError,
 )
 from outreach_os.core.logging import configure_logging, get_logger
+from outreach_os.services.local_workspace import ensure_local_workspace
 
 # Starlette's BaseHTTPMiddleware dispatch signature.
 _CallNext: TypeAlias = Callable[[Request], Awaitable[Response]]
@@ -68,6 +67,12 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         environment=settings.environment,
         database_host=settings.database_url.split("@")[-1],
     )
+    try:
+        await ensure_local_workspace()
+    except Exception as exc:
+        # Keep booting: /health must still answer while the DB is down, and
+        # the workspace is created again on the first request.
+        log.warning("local_workspace_bootstrap_failed", error=str(exc)[:200])
     if settings.sentry_dsn and settings.environment != "development":
         sentry_sdk.init(
             dsn=settings.sentry_dsn.get_secret_value(),
@@ -145,7 +150,7 @@ app.add_middleware(
     allow_origins=_cors_origins,
     allow_credentials=True,
     allow_methods=["GET", "POST", "PATCH", "DELETE", "OPTIONS"],
-    allow_headers=["Authorization", "Content-Type"],
+    allow_headers=["Content-Type"],
 )
 
 
@@ -174,9 +179,7 @@ async def _handle_domain_error(request: Request, exc: OutreachError) -> JSONResp
 # --- routes ---
 
 
-app.include_router(auth.router, prefix="/v1")
 app.include_router(tenants.router, prefix="/v1")
-app.include_router(users.router, prefix="/v1")
 app.include_router(credentials.router, prefix="/v1")
 app.include_router(onboarding.router, prefix="/v1")
 app.include_router(mailboxes.router, prefix="/v1")

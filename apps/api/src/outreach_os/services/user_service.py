@@ -11,8 +11,7 @@ import uuid
 from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from outreach_os.core.auth import hash_password
-from outreach_os.domain.models.user import AppUser, UserRole
+from outreach_os.domain.models.user import AppUser
 
 
 async def get_user_by_email(
@@ -47,21 +46,3 @@ async def lookup_user_by_email(
         return None
     return row[0], row[1], row[2], row[3]
 
-
-async def create_user(
-    session: AsyncSession,
-    *,
-    tenant_id: uuid.UUID,
-    email: str,
-    password: str,
-    role: UserRole = UserRole.MEMBER,
-) -> AppUser:
-    user = AppUser(
-        tenant_id=tenant_id,
-        email=email.lower(),
-        password_hash=hash_password(password),
-        role=role.value,
-    )
-    session.add(user)
-    await session.flush()
-    return user

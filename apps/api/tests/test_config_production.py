@@ -23,7 +23,6 @@ _VAULT_KEY = base64.urlsafe_b64encode(secrets.token_bytes(32)).decode()
 def _prod_env(monkeypatch: pytest.MonkeyPatch, **overrides: str) -> None:
     env = {
         "ENVIRONMENT": "production",
-        "JWT_SECRET": _STRONG_SECRET,
         "VAULT_MASTER_KEY": _VAULT_KEY,
         "INBOUND_WEBHOOK_SECRET": _STRONG_SECRET,
         "CORS_ALLOWED_ORIGINS": "https://app.example.com",
@@ -92,12 +91,6 @@ def test_production_boots_with_a_complete_config(
     settings = Settings()
     assert settings.environment == "production"
     assert settings.celery_task_always_eager is False
-
-
-def test_weak_jwt_secret_is_refused(monkeypatch: pytest.MonkeyPatch) -> None:
-    _prod_env(monkeypatch, JWT_SECRET="short")
-    with pytest.raises(ValidationError, match="JWT_SECRET"):
-        Settings()
 
 
 def test_missing_cors_is_refused(monkeypatch: pytest.MonkeyPatch) -> None:
