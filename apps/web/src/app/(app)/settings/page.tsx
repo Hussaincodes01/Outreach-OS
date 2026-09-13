@@ -41,9 +41,7 @@ export default function SettingsPage() {
       <Card>
         <CardHeader>
           <CardTitle>Workspace</CardTitle>
-          <CardDescription>
-            Plan and billing management land in Phase 7. Until then, plan is read-only.
-          </CardDescription>
+          <CardDescription>Your workspace name.</CardDescription>
         </CardHeader>
         <CardContent>
           {tenant.isLoading && <p className="text-sm text-muted-foreground">Loading…</p>}
@@ -61,12 +59,6 @@ export default function SettingsPage() {
                 <dt className="text-muted-foreground">Status</dt>
                 <dd>
                   <Badge variant="secondary">{tenant.data.status}</Badge>
-                </dd>
-              </div>
-              <div>
-                <dt className="text-muted-foreground">Plan</dt>
-                <dd>
-                  <Badge variant="outline">{tenant.data.plan}</Badge>
                 </dd>
               </div>
               <div className="col-span-2">

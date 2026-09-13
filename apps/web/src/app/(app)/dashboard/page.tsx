@@ -57,7 +57,7 @@ export default function DashboardPage() {
         <h1 className="text-2xl font-semibold tracking-tight">Dashboard</h1>
         <p className="text-muted-foreground">
           {tenantQuery.data
-            ? `Workspace: ${tenantQuery.data.name} (${tenantQuery.data.plan})`
+            ? `Workspace: ${tenantQuery.data.name}`
             : "Loading workspace…"}
         </p>
       </div>

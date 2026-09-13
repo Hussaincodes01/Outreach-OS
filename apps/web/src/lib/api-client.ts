@@ -6,79 +6,8 @@
  * `scripts/generate-api-client.sh` helper into
  * `packages/shared-types/src/index.ts`.
  */
-import { useEffect } from "react";
-import { useAuth } from "./auth";
-
 const API_URL =
   process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
-
-export interface SignupInput {
-  email: string;
-  password: string;
-  tenantName: string;
-  tenantSlug?: string;
-}
-
-export interface TokenPair {
-  /** JWT access token (short-lived, ~15 min) */
-  access_token: string;
-  /** JWT refresh token (long-lived, ~30 days) */
-  refresh_token: string;
-  token_type: "bearer";
-  expires_in: number;
-  user_id: string;
-  tenant_id: string;
-}
-
-export interface AdminCustomerOut {
-  tenant_id: string;
-  name: string;
-  slug: string;
-  status: string;
-  plan: string;
-  user_count: number;
-  lead_count: number;
-  created_at: string;
-  month_usage_sends: number;
-  month_usage_leads: number;
-  month_usage_llm_tokens: number;
-  subscription_status: string | null;
-  subscription_provider: string | null;
-  current_period_end: string | null;
-  cancel_at_period_end: boolean;
-  monthly_price_cents: number;
-}
-
-export interface AdminCustomerPage {
-  items: AdminCustomerOut[];
-  total: number;
-  limit: number;
-  offset: number;
-}
-
-export interface AdminStatsOut {
-  total_customers: number;
-  active_customers: number;
-  suspended_customers: number;
-  paying_customers: number;
-  mrr_cents: number;
-  customers_by_plan: Record<string, number>;
-  signups_last_30d: number;
-  total_leads: number;
-  total_sends_this_month: number;
-}
-
-export interface UserOut {
-  id: string;
-  email: string;
-  role: string;
-  is_active: boolean;
-  created_at: string;
-  /** Null until the address is confirmed. Access is never gated on this. */
-  email_verified_at: string | null;
-  /** Platform staff. Set only by direct DB statement; gates the admin console. */
-  is_platform_admin: boolean;
-}
 
 export interface TenantOut {
   id: string;
@@ -98,13 +27,6 @@ export interface CredentialOut {
   last_used_at: string | null;
   last_verified_at?: string | null;
   has_secret: boolean;
-}
-
-/** A connectable LLM provider. Served by the API so the UI never hard-codes
- *  a list that can drift from the backend. */
-export interface SocialProviderOut {
-  provider: string;
-  label: string;
 }
 
 export interface ImportPreviewOut {
@@ -283,67 +205,6 @@ export interface SlackWebhookIn {
   name?: string;
   webhook_url: string;
   channel?: string | null;
-}
-
-// --- Phase 7: billing ---
-
-export interface PlanOut {
-  id: string;
-  code: string;
-  name: string;
-  monthly_price_cents: number;
-  monthly_send_cap: number;
-  monthly_lead_cap: number;
-  monthly_llm_token_cap: number;
-  crm_sync_enabled: boolean;
-  slack_notifications_enabled: boolean;
-  email_digest_enabled: boolean;
-  max_team_seats: number;
-  max_mailboxes: number;
-  display_order: number;
-}
-
-export interface PlanListOut {
-  items: PlanOut[];
-}
-
-export interface SubscriptionOut {
-  id: string;
-  plan: PlanOut;
-  status: string;
-  provider: string;
-  provider_customer_id: string | null;
-  provider_subscription_id: string | null;
-  current_period_start: string | null;
-  current_period_end: string | null;
-  cancel_at_period_end: boolean;
-  canceled_at: string | null;
-  created_at: string;
-  updated_at: string;
-}
-
-export interface UsageSummaryOut {
-  sends_used: number;
-  sends_cap: number;
-  leads_used: number;
-  leads_cap: number;
-  llm_tokens_used: number;
-  llm_tokens_cap: number;
-  reset_at: string;
-  over_sends: boolean;
-  over_leads: boolean;
-  over_llm_tokens: boolean;
-}
-
-export interface CheckoutOut {
-  checkout_url: string;
-  provider: string;
-}
-
-export interface PortalOut {
-  portal_url: string;
-  token: string | null;
-  expires_at: string | null;
 }
 
 // --- Phase 2: lead scraping ---
@@ -806,12 +667,6 @@ export function isSetupRequired(err: unknown): err is ApiError {
   return err instanceof ApiError && err.status === 428;
 }
 
-let inMemoryToken: string | null = null;
-
-function authHeader(): Record<string, string> {
-  return inMemoryToken ? { Authorization: `Bearer ${inMemoryToken}` } : {};
-}
-
 async function request<T>(
   path: string,
   init: RequestInit = {}
@@ -820,7 +675,6 @@ async function request<T>(
     ...init,
     headers: {
       "Content-Type": "application/json",
-      ...authHeader(),
       ...(init.headers ?? {}),
     },
     cache: "no-store",
@@ -850,7 +704,6 @@ async function requestForm<T>(path: string, form: FormData): Promise<T> {
   const res = await fetch(`${API_URL}${path}`, {
     method: "POST",
     body: form,
-    headers: { ...authHeader() },
     cache: "no-store",
   });
   if (!res.ok) {
@@ -867,63 +720,6 @@ async function requestForm<T>(path: string, form: FormData): Promise<T> {
 }
 
 export const api = {
-  setAccessToken(token: string | null) {
-    inMemoryToken = token;
-  },
-
-  async socialProviders(): Promise<SocialProviderOut[]> {
-    return request<SocialProviderOut[]>("/v1/auth/oauth/providers");
-  },
-
-  /** Full-page navigation: the provider's consent screen can't run in a fetch. */
-  socialLoginUrl(provider: string): string {
-    return `${API_URL}/v1/auth/oauth/${provider}/start`;
-  },
-
-  async adminStats(): Promise<AdminStatsOut> {
-    return request<AdminStatsOut>("/v1/admin/stats");
-  },
-
-  async adminCustomers(params: { q?: string; status?: string } = {}): Promise<AdminCustomerPage> {
-    const qs = new URLSearchParams();
-    if (params.q) qs.set("q", params.q);
-    if (params.status) qs.set("status", params.status);
-    const suffix = qs.toString() ? `?${qs}` : "";
-    return request<AdminCustomerPage>(`/v1/admin/customers${suffix}`);
-  },
-
-  async adminSetCustomerStatus(tenantId: string, status: string): Promise<AdminCustomerOut> {
-    return request<AdminCustomerOut>(`/v1/admin/customers/${tenantId}/status`, {
-      method: "PATCH",
-      body: JSON.stringify({ status }),
-    });
-  },
-
-  async forgotPassword(email: string): Promise<{ message: string }> {
-    return request("/v1/auth/forgot-password", {
-      method: "POST",
-      body: JSON.stringify({ email }),
-    });
-  },
-
-  async resetPassword(token: string, newPassword: string): Promise<{ message: string }> {
-    return request("/v1/auth/reset-password", {
-      method: "POST",
-      body: JSON.stringify({ token, new_password: newPassword }),
-    });
-  },
-
-  async verifyEmail(token: string): Promise<{ message: string }> {
-    return request("/v1/auth/verify-email", {
-      method: "POST",
-      body: JSON.stringify({ token }),
-    });
-  },
-
-  async resendVerification(): Promise<{ message: string }> {
-    return request("/v1/auth/resend-verification", { method: "POST" });
-  },
-
   async previewLeadImport(file: File): Promise<ImportPreviewOut> {
     const form = new FormData();
     form.append("file", file);
@@ -938,44 +734,6 @@ export const api = {
     form.append("file", file);
     form.append("mapping", JSON.stringify(mapping));
     return requestForm<ImportResultOut>("/v1/leads/import", form);
-  },
-
-  async signup(input: SignupInput): Promise<TokenPair> {
-    return request<TokenPair>("/v1/auth/signup", {
-      method: "POST",
-      body: JSON.stringify({
-        email: input.email,
-        password: input.password,
-        tenant_name: input.tenantName,
-        tenant_slug: input.tenantSlug,
-      }),
-    });
-  },
-
-  async login(input: { email: string; password: string }): Promise<TokenPair> {
-    return request<TokenPair>("/v1/auth/login", {
-      method: "POST",
-      body: JSON.stringify(input),
-    });
-  },
-
-  async refresh(refreshToken: string): Promise<TokenPair> {
-    return request<TokenPair>("/v1/auth/refresh", {
-      method: "POST",
-      body: JSON.stringify({ refresh_token: refreshToken }),
-    });
-  },
-
-  /**
-   * `token` is optional: once the auth bridge has run, `request()` already
-   * attaches the in-memory token. Callers during sign-in, before the bridge
-   * is wired, pass it explicitly.
-   */
-  me(token?: string): Promise<UserOut> {
-    return request<UserOut>(
-      "/v1/auth/me",
-      token ? { headers: { Authorization: `Bearer ${token}` } } : {}
-    );
   },
 
   // -- tenant --
@@ -1151,38 +909,6 @@ export const api = {
   },
   async deleteSlackWebhook(id: string): Promise<void> {
     return request<void>(`/v1/slack-webhooks/${id}`, { method: "DELETE" });
-  },
-
-  // -- Billing --
-  async listPlans(): Promise<PlanListOut> {
-    return request<PlanListOut>("/v1/billing/plans");
-  },
-
-  /** Pricing for the marketing page — no account required. */
-  async listPublicPlans(): Promise<PlanListOut> {
-    return request<PlanListOut>("/v1/billing/plans/public");
-  },
-  async getSubscription(): Promise<SubscriptionOut | null> {
-    return request<SubscriptionOut | null>("/v1/billing/subscription");
-  },
-  async getUsage(): Promise<UsageSummaryOut> {
-    return request<UsageSummaryOut>("/v1/billing/usage");
-  },
-  async startCheckout(planCode: string): Promise<CheckoutOut> {
-    return request<CheckoutOut>("/v1/billing/checkout", {
-      method: "POST",
-      body: JSON.stringify({ plan_code: planCode }),
-    });
-  },
-  async startPortal(): Promise<PortalOut> {
-    return request<PortalOut>("/v1/billing/portal", {
-      method: "POST",
-      body: JSON.stringify({}),
-    });
-  },
-  portalRedirectUrl(token: string): string {
-    const base = (process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000").replace(/\/+$/, "");
-    return `${base}/v1/billing/portal/redirect?token=${encodeURIComponent(token)}`;
   },
 
   // -- ICPs --
@@ -1555,11 +1281,3 @@ export const api = {
 };
 
 export { ApiError };
-
-/** Bridge the api-client's in-memory token to the AuthProvider on mount. */
-export function useApiAuthBridge(): void {
-  const { accessToken } = useAuth();
-  useEffect(() => {
-    api.setAccessToken(accessToken);
-  }, [accessToken]);
-}

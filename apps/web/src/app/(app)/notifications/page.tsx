@@ -4,7 +4,6 @@ import { useEffect, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { CheckCheck, Filter } from "lucide-react";
 import { api } from "@/lib/api-client";
-import { useAuth } from "@/lib/auth";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -15,7 +14,6 @@ export default function NotificationsPage() {
   const [eventKey, setEventKey] = useState("");
   const [unreadOnly, setUnreadOnly] = useState(false);
   const qc = useQueryClient();
-  const { accessToken } = useAuth();
 
   const list = useQuery({
     queryKey: ["notifications", { eventKey, unreadOnly }],
@@ -26,14 +24,13 @@ export default function NotificationsPage() {
     queryFn: () => api.notificationEvents(),
   });
 
-  // WebSocket live feed: connect when authenticated, push incoming events
-  // into the same query so the user sees new notifications without reload.
+  // WebSocket live feed: push incoming events into the same query so the
+  // user sees new notifications without reload.
   const [wsStatus, setWsStatus] = useState<"idle" | "open" | "closed" | "error">("idle");
   useEffect(() => {
-    if (!accessToken) return;
     const apiUrl = (process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000")
       .replace(/^http/i, "ws");
-    const url = `${apiUrl}/v1/notifications/ws?token=${encodeURIComponent(accessToken)}`;
+    const url = `${apiUrl}/v1/notifications/ws`;
     let ws: WebSocket | null = null;
     let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
     let active = true;
@@ -58,7 +55,7 @@ export default function NotificationsPage() {
       if (reconnectTimer) clearTimeout(reconnectTimer);
       ws?.close();
     };
-  }, [qc, accessToken]);
+  }, [qc]);
 
   const markRead = useMutation({
     mutationFn: (ids: string[]) => api.markNotificationsRead(ids),
