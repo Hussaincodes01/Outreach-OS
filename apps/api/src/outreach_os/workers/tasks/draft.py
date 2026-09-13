@@ -12,13 +12,12 @@ rows and uploads the body to S3), and commits.
 """
 from __future__ import annotations
 
-import asyncio
 import logging
 import uuid
 from datetime import datetime
 from typing import Any
 
-from outreach_os.core.db import session_scope
+from outreach_os.core.db import run_worker_task, session_scope
 from outreach_os.core.tenancy import set_tenant_for_session
 from outreach_os.services.draft_service import DraftGenerationResult, DraftService
 from outreach_os.workers.celery_app import celery_app
@@ -69,7 +68,7 @@ def generate_draft(
         "generate_draft start tenant=%s campaign=%s lead=%s step=%s",
         tenant_id, campaign_id, lead_id, step_id,
     )
-    summary = asyncio.run(
+    summary = run_worker_task(
         generate_draft_async(
             tenant_id=uuid.UUID(tenant_id),
             campaign_id=uuid.UUID(campaign_id),

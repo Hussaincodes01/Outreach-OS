@@ -17,7 +17,6 @@ The beat schedule is registered in `workers/celery_app.py`.
 """
 from __future__ import annotations
 
-import asyncio
 import logging
 from collections import defaultdict
 from datetime import datetime, timedelta, timezone
@@ -25,7 +24,7 @@ from typing import Any
 
 from sqlalchemy import select
 
-from outreach_os.core.db import session_scope
+from outreach_os.core.db import run_worker_task, session_scope
 from outreach_os.core.mailer import OutgoingMessage, get_mailer_client
 from outreach_os.core.tenancy import set_tenant_for_session
 from outreach_os.domain.models.notification import Notification
@@ -43,7 +42,7 @@ def send_email_digest() -> dict[str, Any]:
     `mailer.sent` as a single message with a body that lists every
     notification in the group.
     """
-    return asyncio.run(_send_email_digest_async())
+    return run_worker_task(_send_email_digest_async())
 
 
 async def _send_email_digest_async() -> dict[str, Any]:

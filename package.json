@@ -8,7 +8,11 @@
     "packages/*"
   ],
   "scripts": {
-    "dev:infra": "docker compose -f infra/docker/docker-compose.dev.yml up -d",
+    "setup": "node scripts/init-env.mjs",
+    "start": "docker compose up -d --build",
+    "stop": "docker compose down",
+    "logs": "docker compose logs -f api worker beat",
+    "dev:infra": "docker compose -f infra/docker/docker-compose.dev.yml up -d postgres redis minio minio-init greenmail",
     "dev:api": "npm run dev --workspace=@outreach-os/api",
     "dev:web": "npm run dev --workspace=@outreach-os/web",
     "test:api": "npm run test --workspace=@outreach-os/api",

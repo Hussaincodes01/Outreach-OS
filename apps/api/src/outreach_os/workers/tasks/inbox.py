@@ -6,14 +6,13 @@ file list has a single `workers/tasks/inbox.py` (no `_tasks.py` sibling).
 """
 from __future__ import annotations
 
-import asyncio
 import imaplib
 import logging
 from datetime import datetime
 
 from sqlalchemy import select
 
-from outreach_os.core.db import get_session_factory
+from outreach_os.core.db import get_session_factory, run_worker_task
 from outreach_os.core.errors import MailError
 from outreach_os.core.tenancy import set_tenant_for_session
 from outreach_os.domain.models.mailbox import Mailbox
@@ -82,7 +81,7 @@ def poll_inboxes() -> dict[str, int]:
     brand-new event loop in a thread, then returns."""
     log.info("poll_inboxes start")
     started = datetime.utcnow()
-    summary = asyncio.run(poll_inboxes_async())
+    summary = run_worker_task(poll_inboxes_async())
     log.info(
         "poll_inboxes done in %ss: %s",
         (datetime.utcnow() - started).total_seconds(), summary,

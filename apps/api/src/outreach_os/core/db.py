@@ -6,8 +6,10 @@ yields the session, then commits/rolls back.
 """
 from __future__ import annotations
 
-from collections.abc import AsyncIterator
+import asyncio
+from collections.abc import AsyncIterator, Coroutine
 from contextlib import asynccontextmanager
+from typing import Any, TypeVar
 
 from sqlalchemy.ext.asyncio import (
     AsyncEngine,
@@ -18,6 +20,8 @@ from sqlalchemy.ext.asyncio import (
 from sqlalchemy.orm import DeclarativeBase
 
 from outreach_os.core.config import get_settings
+
+_T = TypeVar("_T")
 
 
 class Base(DeclarativeBase):
@@ -79,3 +83,38 @@ def reset_for_tests() -> None:
     global _engine, _session_factory
     _engine = None
     _session_factory = None
+
+
+def run_worker_task(coro: Coroutine[Any, Any, _T]) -> _T:
+    """Run `coro` on a fresh event loop and dispose the module-global async
+    engine before that loop closes.
+
+    Celery task wrappers (send_due, poll_inboxes, generate_draft,
+    run_scraping_job, send_email_digest, ...) each call `asyncio.run(...)`
+    per invocation. A prefork Celery worker handles MANY task invocations in
+    the same OS process, so the `_engine` cached above by `get_engine()` —
+    and the asyncpg connections / internal asyncio primitives its pool
+    holds — survive from one `asyncio.run()` call to the next. But every
+    `asyncio.run()` call opens a brand-new event loop, and SQLAlchemy's
+    async engine binds its pool to whichever loop was running when it was
+    first used. Reusing that cached engine from a second, different event
+    loop raises "Task ... got Future ... attached to a different loop" the
+    moment the pool tries to check out a connection — which is exactly what
+    happens the second time any worker process handles an async-DB task
+    (observed live: send_due / poll_inboxes both failed this way on their
+    second run in the same forked worker).
+
+    Disposing the engine here, inside the SAME loop that used it and right
+    before that loop is torn down, forces the next call in this process to
+    lazily rebuild a fresh engine bound to ITS OWN new loop. Cost: a new
+    connection (pool) per task invocation — the right trade-off for
+    beat-scheduled background tasks, which are not a request hot path.
+    """
+
+    async def _runner() -> _T:
+        try:
+            return await coro
+        finally:
+            await dispose_engine()
+
+    return asyncio.run(_runner())

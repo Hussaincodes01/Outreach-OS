@@ -1,0 +1,218 @@
+# One-command, self-contained stack for the single-user build.
+#
+#   From the repo root:
+#     npm run setup   # creates/completes .env
+#     npm start        # docker compose up -d --build
+#
+# Brings up Postgres + Redis + MinIO + the API/worker/beat/web services.
+# Add `--profile e2e` (or `docker compose --profile e2e up -d --build`) to
+# also start GreenMail, a local SMTP+IMAP test server used by the smoke
+# script and by manual end-to-end testing.
+#
+# Secrets (VAULT_MASTER_KEY, INBOUND_WEBHOOK_SECRET, provider API keys, ...)
+# come from the repo-root `.env` via `env_file`. Only container-network URLs
+# (DB/Redis/S3 hosts) are overridden per service below, because `.env` is
+# written for host-machine use (localhost ports) and `environment:` takes
+# precedence over `env_file`.
+#
+# Internal DB credentials (outreach/outreach app role, postgres superuser)
+# are fixed by infra/docker/postgres/initdb and are container-internal only.
+
+name: outreach-os
+
+x-api-build: &api-build
+  build:
+    context: .
+    dockerfile: infra/docker/Dockerfile.api
+  image: outreach-os-api:latest
+
+# Shared runtime env for every service that imports the app config.
+x-app-env: &app-env
+  env_file:
+    - .env
+
+x-runtime-urls: &runtime-urls
+  # App connects as the NON-superuser role so RLS is enforced.
+  DATABASE_URL: postgresql+asyncpg://outreach:outreach@postgres:5432/outreach
+  DATABASE_URL_SYNC: postgresql://outreach:outreach@postgres:5432/outreach
+  REDIS_URL: redis://redis:6379/0
+  CELERY_BROKER_URL: redis://redis:6379/1
+  CELERY_RESULT_BACKEND: redis://redis:6379/2
+  S3_ENDPOINT_URL: http://minio:9000
+  S3_ACCESS_KEY: minioadmin
+  S3_SECRET_KEY: minioadmin
+  CELERY_TASK_ALWAYS_EAGER: "false"
+  ENVIRONMENT: ${ENVIRONMENT:-development}
+  PUBLIC_BASE_URL: ${PUBLIC_BASE_URL:-http://localhost:8000}
+
+services:
+  postgres:
+    image: pgvector/pgvector:0.7.4-pg16
+    restart: unless-stopped
+    environment:
+      # We use the default `postgres` superuser as the bootstrap role so the
+      # initdb scripts can create a *non-superuser* `outreach` role for the
+      # application. Superusers bypass RLS by design, which would defeat the
+      # multi-tenant safety net.
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: postgres
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+      # Creates the non-superuser `outreach` role, the app databases, and the
+      # pgcrypto/vector extensions inside them (00/01/02 init scripts).
+      - ./infra/docker/postgres/initdb:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  minio:
+    # Docker Hub no longer serves minio/minio or minio/mc for anonymous pulls
+    # ("repository does not exist"); MinIO now publishes those images only to
+    # quay.io. Pinned to a verified-pulling release tag.
+    image: quay.io/minio/minio:RELEASE.2025-04-22T22-12-26Z
+    restart: unless-stopped
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: minioadmin
+      MINIO_ROOT_PASSWORD: minioadmin
+    volumes:
+      - minio-data:/data
+    healthcheck:
+      # Verified inside the running container: `mc ready local` works
+      # out of the box (the image's entrypoint pre-configures the `local`
+      # alias against itself), so no `mc alias set` step is needed.
+      test: ["CMD", "mc", "ready", "local"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  # One-shot: apply Alembic migrations as the SUPERUSER. Migration 0010 runs
+  # `ALTER FUNCTION auth_user_by_email(text) OWNER TO postgres`, which requires
+  # superuser — the runtime app role (outreach) cannot do it, and without it
+  # login silently returns nothing under RLS. The runtime services still
+  # connect as the non-superuser role (see DATABASE_URL below / runtime-urls).
+  migrate:
+    <<: [*api-build, *app-env]
+    restart: "no"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      <<: *runtime-urls
+      # Superuser URL — migrations only.
+      DATABASE_URL: postgresql+asyncpg://postgres:postgres@postgres:5432/outreach
+      DATABASE_URL_SYNC: postgresql://postgres:postgres@postgres:5432/outreach
+    command: ["alembic", "upgrade", "head"]
+
+  api:
+    <<: [*api-build, *app-env]
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+    environment:
+      <<: *runtime-urls
+      GUNICORN_WORKERS: "4"
+    ports:
+      - "8000:8000"
+
+  worker:
+    # Reuse the API image; just run the Celery worker instead of the web server.
+    <<: [*api-build, *app-env]
+    restart: unless-stopped
+    depends_on:
+      redis:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+    environment:
+      <<: *runtime-urls
+    command:
+      ["celery", "-A", "outreach_os.workers.celery_app", "worker", "-l", "info", "--concurrency", "4"]
+    healthcheck:
+      # The image's HEALTHCHECK (curl localhost:8000/health) is for the api
+      # service; a celery worker has no HTTP server, so that inherited check
+      # always fails here. Nothing `depends_on` worker's health — disable it
+      # rather than report a false "unhealthy".
+      disable: true
+
+  beat:
+    # Periodic task scheduler (send_due, poll_inboxes, ...). Exactly one beat instance.
+    <<: [*api-build, *app-env]
+    restart: unless-stopped
+    depends_on:
+      redis:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+    environment:
+      <<: *runtime-urls
+    command:
+      # --schedule/--pidfile: the celery process runs as the non-root `app`
+      # user (see Dockerfile.api), and /app (WORKDIR, COPY'd in as root) is
+      # not writable by that user — celery beat's default schedule path
+      # (./celerybeat-schedule, relative to the cwd) fails with "Permission
+      # denied" otherwise. /tmp is world-writable in the runtime image.
+      ["celery", "-A", "outreach_os.workers.celery_app", "beat", "-l", "info",
+       "--schedule=/tmp/celerybeat-schedule", "--pidfile=/tmp/celerybeat.pid"]
+    healthcheck:
+      # Same reasoning as worker's: the image's inherited HTTP healthcheck
+      # doesn't apply to celery beat, and nothing `depends_on` beat's health.
+      disable: true
+
+  web:
+    build:
+      context: .
+      dockerfile: infra/docker/Dockerfile.web
+      args:
+        # Baked into the client bundle at build time. Set to the PUBLIC API URL
+        # the browser will reach (e.g. https://api.example.com).
+        NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-http://localhost:8000}
+    image: outreach-os-web:latest
+    restart: unless-stopped
+    depends_on:
+      - api
+    ports:
+      - "3000:3000"
+
+  # Local SMTP+IMAP test server for the e2e smoke script. Not part of the
+  # default stack — start with `docker compose --profile e2e up -d --build`.
+  greenmail:
+    image: greenmail/standalone:2.1.2
+    restart: unless-stopped
+    environment:
+      # Accept any login; mailboxes are created on first delivery. Test-only server.
+      GREENMAIL_OPTS: "-Dgreenmail.setup.test.smtp -Dgreenmail.setup.test.imap -Dgreenmail.auth.disabled -Dgreenmail.hostname=0.0.0.0 -Dgreenmail.verbose"
+    ports:
+      - "3025:3025"
+      - "3143:3143"
+    profiles: ["e2e"]
+
+volumes:
+  postgres-data:
+  redis-data:
+  minio-data:

@@ -45,7 +45,6 @@ jobs:
       # ... OWNER), matching the `migrate` service in docker-compose.prod.yml.
       DATABASE_URL_ADMIN: postgresql+asyncpg://postgres:postgres@localhost:5432/outreach_test
       REDIS_URL: redis://localhost:6379/0
-      JWT_SECRET: ci-test-secret-not-for-production-use
       VAULT_MASTER_KEY: 2QU3n0T0Q3n0T0Q3n0T0Q3n0T0Q3n0T0Q3n0T0Q3n0Q=
       LOG_LEVEL: WARNING
       ENVIRONMENT: ci
@@ -121,3 +120,17 @@ jobs:
       - run: npm run build:web
         env:
           NEXT_PUBLIC_API_URL: http://localhost:8000
+
+  compose:
+    name: Compose (config validity)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      # docker-compose.yml reads secrets via env_file: [.env], so `config`
+      # needs a .env to resolve against. Any file with the required keys
+      # works here — this only validates the compose file parses and
+      # interpolates, it does not start the stack.
+      - name: Create placeholder .env
+        run: cp .env.example .env
+      - name: Validate docker-compose.yml
+        run: docker compose config -q

@@ -15,7 +15,6 @@ each, and inserting the deduped leads. Updates the job's `status`,
 """
 from __future__ import annotations
 
-import asyncio
 import logging
 import threading
 import uuid
@@ -24,7 +23,7 @@ from typing import Any
 
 from sqlalchemy import select
 
-from outreach_os.core.db import session_scope
+from outreach_os.core.db import run_worker_task, session_scope
 from outreach_os.core.rate_limit import check_and_consume
 from outreach_os.core.tenancy import set_tenant_for_session
 from outreach_os.domain.models.lead_source import LeadSource
@@ -167,14 +166,20 @@ def run_scraping_job(job_id: str, tenant_id: str) -> dict[str, Any]:
 
     # We do NOT call run_scraping_job_async directly from the event loop
     # (the test's loop) because `asyncio.run` cannot nest. Instead we
-    # run it in a thread with its own loop. SQLAlchemy's async engine
-    # holds connections per loop, so this is the safe pattern.
+    # run it in a thread with its own loop. `run_worker_task` also disposes
+    # the shared async engine before that loop closes -- a Celery prefork
+    # worker handles many task invocations in the same OS process, and
+    # SQLAlchemy's async engine pool is bound to whichever event loop was
+    # running the first time it was used; reusing it from a second loop
+    # (here: a second call to this task, or the `_mark_job_failed_async`
+    # call below, each on their own fresh loop/thread) raises "Task ...
+    # attached to a different loop" otherwise.
     result_box: list[Any] = []
     error_box: list[BaseException] = []
 
     def _runner() -> None:
         try:
-            result_box.append(asyncio.run(run_scraping_job_async(job_uuid, tenant_uuid)))
+            result_box.append(run_worker_task(run_scraping_job_async(job_uuid, tenant_uuid)))
         except BaseException as exc:
             error_box.append(exc)
 
@@ -188,7 +193,7 @@ def run_scraping_job(job_id: str, tenant_id: str) -> dict[str, Any]:
         # Best-effort mark as failed.
         def _mark_failed() -> None:
             try:
-                asyncio.run(_mark_job_failed_async(job_uuid, tenant_uuid, str(exc)[:500]))
+                run_worker_task(_mark_job_failed_async(job_uuid, tenant_uuid, str(exc)[:500]))
             except Exception:
                 log.exception("failed to mark job %s as failed", job_id)
         _mark_failed()
