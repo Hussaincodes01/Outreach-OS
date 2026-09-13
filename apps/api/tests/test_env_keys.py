@@ -6,6 +6,7 @@ import pytest
 
 from outreach_os.core import env_keys
 from outreach_os.core.llm import set_llm_client
+from outreach_os.domain.models.tenant import Tenant
 from outreach_os.services import credential_lookup, llm_credentials
 from outreach_os.services.local_workspace import LOCAL_TENANT_ID
 
@@ -158,3 +159,34 @@ async def test_test_reports_failure_without_crashing(
     listing = (await client.get("/v1/credentials/providers")).json()
     openai = next(p for p in listing if p["provider"] == "openai")
     assert openai["last_verified_at"] is None
+
+
+async def test_test_on_a_gateway_provider_does_not_overclaim_verified(
+    monkeypatch: pytest.MonkeyPatch, scoped_session, client: httpx.AsyncClient
+) -> None:
+    """openai_like has no universal model to probe (verify_model is None), so
+    verify_credentials always returns ok=True for it once a key/base is set —
+    that must NOT be recorded as "verified" (no live call was actually made),
+    mirroring the stored-credential Test endpoint's own `live` guard."""
+    monkeypatch.setenv("OPENAI_LIKE_API_KEY", "sk-gw")
+    monkeypatch.setenv("OPENAI_LIKE_API_BASE", "https://gateway.example.com/v1")
+
+    resp = await client.post("/v1/credentials/providers/openai_like/test")
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["ok"] is True
+
+    listing = (await client.get("/v1/credentials/providers")).json()
+    gw = next(p for p in listing if p["provider"] == "openai_like")
+    assert gw["last_verified_at"] is None
+
+    tenant = await scoped_session.get(Tenant, LOCAL_TENANT_ID)
+    assert "openai_like" not in ((tenant.onboarding_state or {}).get("verified_providers") or {})
+
+    audit = (
+        await client.get(
+            "/v1/audit", params={"action": "credential.provider.verified"}
+        )
+    ).json()
+    assert audit["total"] == 0
+    assert audit["items"] == []

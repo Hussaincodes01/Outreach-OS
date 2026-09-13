@@ -302,7 +302,11 @@ async def test_provider(
             raise MissingLLMCredentialsError(provider)
 
     ok, message = await verify_credentials(db, tenant_id=user.tenant_id, provider=provider)
-    if ok:
+    # Only a provider we can probe yields a live result. For a gateway endpoint
+    # there is no universal model to call, so saying "verified" would claim
+    # more than we did — mirrors the stored-credential Test endpoint above.
+    live = spec.verify_model is not None
+    if ok and live:
         tenant = await db.get(Tenant, user.tenant_id)
         if tenant is not None:
             # Reassign (rather than mutate in place) so SQLAlchemy detects the
