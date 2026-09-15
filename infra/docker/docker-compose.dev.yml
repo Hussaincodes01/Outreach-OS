@@ -39,8 +39,9 @@ services:
   minio:
     # Docker Hub no longer serves minio/minio or minio/mc for anonymous pulls
     # ("repository does not exist"); MinIO now publishes those images only to
-    # quay.io. Functionally identical images, different registry.
-    image: quay.io/minio/minio:latest
+    # quay.io. Pinned to the same verified release tag as the root
+    # docker-compose.yml.
+    image: quay.io/minio/minio:RELEASE.2025-04-22T22-12-26Z
     container_name: outreach-minio
     restart: unless-stopped
     command: server /data --console-address ":9001"
@@ -59,7 +60,8 @@ services:
       retries: 10
 
   minio-init:
-    image: quay.io/minio/mc:latest
+    # Pinned to a release tag verified with `docker pull`.
+    image: quay.io/minio/mc:RELEASE.2025-04-16T18-13-26Z
     container_name: outreach-minio-init
     depends_on:
       minio:
