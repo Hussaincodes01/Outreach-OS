@@ -17,10 +17,48 @@ event loop doesn't block on network I/O.
 from __future__ import annotations
 
 import re
+import time
 from dataclasses import dataclass, field
 from typing import Any, Protocol
 
 import litellm
+
+# Rate-limit retries. Free-tier plans (Groq allows 1,000 output tokens per
+# minute) reject a burst of agent calls with HTTP 429 and say how long to
+# wait, so a 429 is retried rather than failing the draft. Capped so a single
+# call stays well inside the agent run timeout.
+RATE_LIMIT_MAX_RETRIES = 3
+RATE_LIMIT_MAX_WAIT_SECONDS = 30.0
+_RATE_LIMIT_DEFAULT_WAIT_SECONDS = 5.0
+_TRY_AGAIN_RE = re.compile(r"try again in\s+([0-9]+(?:\.[0-9]+)?)\s*s", re.IGNORECASE)
+
+# Indirection so tests can observe waits without sleeping.
+_sleep = time.sleep
+
+
+def _is_rate_limit_error(exc: Exception) -> bool:
+    if getattr(exc, "status_code", None) == 429:
+        return True
+    return "ratelimit" in type(exc).__name__.lower()
+
+
+def _rate_limit_wait(exc: Exception) -> float:
+    """Seconds to wait before retrying: the provider's `retry-after` header,
+    else the "try again in Ns" hint in its message, else a short default."""
+    wait: float | None = None
+    headers = getattr(getattr(exc, "response", None), "headers", None)
+    if headers is not None:
+        try:
+            wait = float(headers.get("retry-after", ""))
+        except ValueError:
+            wait = None
+    if wait is None:
+        match = _TRY_AGAIN_RE.search(str(exc))
+        if match:
+            wait = float(match.group(1))
+    if wait is None:
+        wait = _RATE_LIMIT_DEFAULT_WAIT_SECONDS
+    return min(max(wait, 0.0), RATE_LIMIT_MAX_WAIT_SECONDS)
 
 
 @dataclass(frozen=True)
@@ -180,15 +218,22 @@ class LiteLLMClient:
         if tools:
             kwargs["tools"] = tools
             kwargs["tool_choice"] = "auto"
-        try:
-            resp = litellm.completion(**kwargs)
-        except Exception as exc:
-            detail = redact(str(exc))
-            if _is_auth_error(exc):
-                raise LLMAuthError(
-                    f"{self._credentials.provider} rejected the API key: {detail}"
-                ) from exc
-            raise LLMError(f"chat failed for model={model!r}: {detail}") from exc
+        retries = 0
+        while True:
+            try:
+                resp = litellm.completion(**kwargs)
+                break
+            except Exception as exc:
+                if _is_rate_limit_error(exc) and retries < RATE_LIMIT_MAX_RETRIES:
+                    retries += 1
+                    _sleep(_rate_limit_wait(exc))
+                    continue
+                detail = redact(str(exc))
+                if _is_auth_error(exc):
+                    raise LLMAuthError(
+                        f"{self._credentials.provider} rejected the API key: {detail}"
+                    ) from exc
+                raise LLMError(f"chat failed for model={model!r}: {detail}") from exc
         choice = resp.choices[0].message
         text = (choice.content or "").strip()
         raw: dict[str, Any] | None = None
