@@ -124,6 +124,12 @@ class SmtpMailer:
         msg["Subject"] = message.subject
         if message.message_id_header:
             msg["Message-ID"] = message.message_id_header
+        # Threading headers: without them a follow-up or reply shows up as a
+        # brand-new conversation in the recipient's mail client.
+        if message.in_reply_to:
+            msg["In-Reply-To"] = message.in_reply_to
+        if message.references:
+            msg["References"] = message.references
         for key, value in message.headers.items():
             msg[key] = value
         msg.set_content(message.body_text)

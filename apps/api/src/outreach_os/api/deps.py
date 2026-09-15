@@ -29,9 +29,9 @@ from outreach_os.services.local_workspace import ensure_local_workspace, local_a
 async def get_db() -> AsyncIterator[AsyncSession]:
     """Transaction-scoped session with NO RLS context.
 
-    Use only for health checks or for flows that set the tenant context
-    manually (e.g. the OAuth callback that resolves the tenant from a
-    signed state token).
+    Use only for health checks or for code that sets the tenant context
+    itself with `set_tenant_for_session`. Request handlers that read or
+    write workspace data should depend on `get_scoped_db` instead.
     """
     factory = get_session_factory()
     async with factory() as session, session.begin():

@@ -94,9 +94,8 @@ never entered in the web app.
   `openai` → `OPENAI_API_KEY`, `together-ai` → `TOGETHER_AI_API_KEY`.
 - **Scraping keys** use `<KIND>_API_KEY` for `serper`, `proxycurl`,
   `rapidapi`, `scrapingbee` — e.g. `SERPER_API_KEY`.
-- **Precedence:** a value in the process environment / `.env` always beats a
-  credential stored through the app's Integrations page. An empty value
-  counts as unset.
+- **Where keys go:** set them in `.env` and restart the API. The web app
+  never collects keys; an empty value counts as unset.
 - Values are read once per process; after editing `.env`, restart the API
   (`docker compose restart api worker beat`, or re-run `npm start`) for the
   change to take effect.

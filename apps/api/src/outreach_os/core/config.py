@@ -92,8 +92,8 @@ class Settings(BaseSettings):
     # From address on platform email. Must be a domain you control, or resets
     # land in spam.
     transactional_from_email: str = "no-reply@outreach-os.local"
-    # Public URL of the WEB app (not the API). Reset and verification links
-    # point here, so it has to be where the user's browser can reach the UI.
+    # Public URL of the WEB app (not the API): where the operator's browser
+    # reaches the UI, for any link that should open the web app.
     web_base_url: str = "http://localhost:3000"
 
     # --- Phase 2: Lead scraping ---

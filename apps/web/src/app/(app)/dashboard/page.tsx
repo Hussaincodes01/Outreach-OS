@@ -108,7 +108,7 @@ export default function DashboardPage() {
             </p>
             <p className="text-xs text-muted-foreground">
               {(credsQuery.data?.length ?? 0) === 0
-                ? "Add one in Integrations to enable AI features in Phase 3."
+                ? "Set a provider API key in .env and restart the API to enable AI features."
                 : "configured"}
             </p>
           </CardContent>
@@ -124,7 +124,7 @@ export default function DashboardPage() {
             </p>
             <p className="text-xs text-muted-foreground">
               {(mailboxesQuery.data?.length ?? 0) === 0
-                ? "Connect Gmail, Outlook, or SMTP to start sending in Phase 4."
+                ? "Connect an SMTP/IMAP mailbox to start sending."
                 : "configured"}
             </p>
           </CardContent>

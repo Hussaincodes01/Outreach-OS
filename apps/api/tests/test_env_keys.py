@@ -190,3 +190,40 @@ async def test_test_on_a_gateway_provider_does_not_overclaim_verified(
     ).json()
     assert audit["total"] == 0
     assert audit["items"] == []
+
+
+async def test_verified_provider_is_not_reported_after_its_env_key_is_removed(
+    monkeypatch: pytest.MonkeyPatch, client: httpx.AsyncClient
+) -> None:
+    """A provider counts as verified only while it is still configured (env or
+    stored) AND has a verified timestamp. A stale `verified_providers` stamp
+    left behind after the owner deletes the key from `.env` must not keep the
+    onboarding "Verify your API key" step ticked, nor show in the listing."""
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-env")
+
+    async def _fake_probe(client: object, model: str) -> None:
+        return None
+
+    monkeypatch.setattr(llm_credentials, "_achat_probe", _fake_probe)
+    resp = await client.post("/v1/credentials/providers/openai/test")
+    assert resp.status_code == 200, resp.text
+
+    onboarding = (await client.get("/v1/onboarding")).json()
+    verified_step = next(s for s in onboarding["steps"] if s["key"] == "llm_verified")
+    assert verified_step["done"] is True
+
+    # The owner removes the key from .env and restarts.
+    monkeypatch.delenv("OPENAI_API_KEY")
+    env_keys.reset_env_cache()
+
+    onboarding = (await client.get("/v1/onboarding")).json()
+    verified_step = next(s for s in onboarding["steps"] if s["key"] == "llm_verified")
+    llm_step = next(s for s in onboarding["steps"] if s["key"] == "llm_key")
+    assert llm_step["done"] is False
+    assert verified_step["done"] is False
+    assert "verified" not in (llm_step["detail"] or "")
+
+    listing = (await client.get("/v1/credentials/providers")).json()
+    openai = next(p for p in listing if p["provider"] == "openai")
+    assert openai["connected"] is False
+    assert openai["last_verified_at"] is None

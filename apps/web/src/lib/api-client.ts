@@ -127,7 +127,7 @@ export interface LlmSettingsOut {
 
 export interface MailboxOut {
   id: string;
-  provider: "gmail" | "outlook" | "smtp";
+  provider: "smtp";
   email_address: string;
   is_active: boolean;
   daily_send_cap: number;

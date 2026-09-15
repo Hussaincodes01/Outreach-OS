@@ -13,7 +13,7 @@ const SOURCE_META: Record<string, { name: string; desc: string; needs: string; u
   serper: {
     name: "Serper (Google Search)",
     desc: "Searches Google for people matching your ICP. Returns names, titles, companies, and sometimes emails.",
-    needs: "Serper API key (add via Integrations)",
+    needs: "SERPER_API_KEY set in .env",
     url: "https://serper.dev",
   },
   company_site: {
@@ -25,7 +25,7 @@ const SOURCE_META: Record<string, { name: string; desc: string; needs: string; u
   linkedin_proxycurl: {
     name: "LinkedIn (via Proxycurl)",
     desc: "Enriches leads with LinkedIn profile data (title, company, location). Requires a Proxycurl API key.",
-    needs: "Proxycurl API key (add via Integrations)",
+    needs: "PROXYCURL_API_KEY set in .env",
     url: "https://nubela.co/proxycurl",
   },
 };

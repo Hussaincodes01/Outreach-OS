@@ -135,8 +135,10 @@ export default function MailboxesPage() {
               <DialogHeader>
                 <DialogTitle>Add SMTP mailbox</DialogTitle>
                 <DialogDescription>
-                  Use this for any SMTP server. For MailHog locally, use
-                  host <code>localhost</code> and port <code>1025</code>.
+                  Use this for any SMTP server (Gmail and Outlook work with an app password). Add
+                  the IMAP host to capture replies. For the local GreenMail test server, use host{" "}
+                  <code>greenmail</code> (Docker stack) or <code>localhost</code> (native dev), SMTP
+                  port <code>3025</code> and IMAP port <code>3143</code> without SSL.
                 </DialogDescription>
               </DialogHeader>
               <form
@@ -267,8 +269,9 @@ export default function MailboxesPage() {
         <CardHeader>
           <CardTitle>Connected mailboxes</CardTitle>
           <CardDescription>
-            MailHog is running on <code>localhost:1025</code> for local dev — view captured mail at
-            <code> localhost:8025</code>.
+            Sends go out through each mailbox&apos;s own SMTP server; mailboxes with IMAP settings
+            are polled for replies. The local GreenMail test server (<code>--profile e2e</code>)
+            takes SMTP on port <code>3025</code> and serves IMAP on <code>localhost:3143</code>.
           </CardDescription>
         </CardHeader>
         <CardContent>
@@ -341,8 +344,8 @@ export default function MailboxesPage() {
           <DialogHeader>
             <DialogTitle>Send test email</DialogTitle>
             <DialogDescription>
-              We&apos;ll send a short test message from this mailbox. For MailHog locally, view it at
-              <code> localhost:8025</code>.
+              We&apos;ll send a short test message through this mailbox&apos;s SMTP server. With the
+              local GreenMail test server, read it over IMAP at <code>localhost:3143</code>.
             </DialogDescription>
           </DialogHeader>
           <form

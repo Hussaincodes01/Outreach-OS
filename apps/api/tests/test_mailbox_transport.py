@@ -101,3 +101,89 @@ async def test_decrypt_failure_marks_send_failed_without_crashing_batch(scoped_s
     assert "SMTP" in (step.stop_reason or "") or "smtp" in (step.stop_reason or "").lower()
 
     set_llm_client(None)
+
+
+def test_smtp_mailer_sets_threading_headers(monkeypatch) -> None:
+    """A follow-up/reply must carry In-Reply-To and References, or it won't
+    thread with the earlier message in the recipient's mail client."""
+    import smtplib
+
+    from outreach_os.core.mailer import OutgoingMessage
+
+    sent: list = []
+
+    class _FakeSMTP:
+        def __init__(self, host: str, port: int, timeout: int = 10) -> None:
+            pass
+
+        def __enter__(self) -> _FakeSMTP:
+            return self
+
+        def __exit__(self, *exc: object) -> None:
+            return None
+
+        def starttls(self) -> None:
+            pass
+
+        def login(self, username: str, password: str) -> None:
+            pass
+
+        def send_message(self, msg) -> None:
+            sent.append(msg)
+
+    monkeypatch.setattr(smtplib, "SMTP", _FakeSMTP)
+    mailer = SmtpMailer(
+        host="smtp.example.org", port=587, username="me@example.org",
+        password="app-password", use_tls=True, default_from="me@example.org",
+    )
+    mailer.send(
+        OutgoingMessage(
+            to_email="pat@prospect.example",
+            from_email="me@example.org",
+            subject="Re: Quick question",
+            body_text="Following up.",
+            message_id_header="<step-2@outreach.example>",
+            in_reply_to="<step-1@outreach.example>",
+            references="<step-0@outreach.example> <step-1@outreach.example>",
+        )
+    )
+    assert len(sent) == 1
+    msg = sent[0]
+    assert msg["Message-ID"] == "<step-2@outreach.example>"
+    assert msg["In-Reply-To"] == "<step-1@outreach.example>"
+    assert msg["References"] == "<step-0@outreach.example> <step-1@outreach.example>"
+
+
+def test_smtp_mailer_omits_threading_headers_when_absent(monkeypatch) -> None:
+    import smtplib
+
+    from outreach_os.core.mailer import OutgoingMessage
+
+    sent: list = []
+
+    class _FakeSMTP:
+        def __init__(self, host: str, port: int, timeout: int = 10) -> None:
+            pass
+
+        def __enter__(self) -> _FakeSMTP:
+            return self
+
+        def __exit__(self, *exc: object) -> None:
+            return None
+
+        def send_message(self, msg) -> None:
+            sent.append(msg)
+
+    monkeypatch.setattr(smtplib, "SMTP", _FakeSMTP)
+    mailer = SmtpMailer(
+        host="smtp.example.org", port=25, username=None, password=None,
+        use_tls=False, default_from="me@example.org",
+    )
+    mailer.send(
+        OutgoingMessage(
+            to_email="pat@prospect.example", from_email="me@example.org",
+            subject="Hello", body_text="First touch.",
+        )
+    )
+    assert sent[0]["In-Reply-To"] is None
+    assert sent[0]["References"] is None

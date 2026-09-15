@@ -14,10 +14,6 @@ class ValidationError(OutreachError):
     pass
 
 
-class OAuthError(OutreachError):
-    pass
-
-
 class MailError(OutreachError):
     pass
 

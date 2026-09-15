@@ -43,7 +43,6 @@ from outreach_os.core.errors import (
     ConflictError,
     MailError,
     NotFoundError,
-    OAuthError,
     OutreachError,
     SetupRequiredError,
     ValidationError,
@@ -168,7 +167,6 @@ async def _handle_domain_error(request: Request, exc: OutreachError) -> JSONResp
     status_map = {
         NotFoundError: status.HTTP_404_NOT_FOUND,
         ValidationError: status.HTTP_422_UNPROCESSABLE_ENTITY,
-        OAuthError: status.HTTP_503_SERVICE_UNAVAILABLE,
         MailError: status.HTTP_502_BAD_GATEWAY,
         ConflictError: status.HTTP_409_CONFLICT,
         # 428: the request was fine, the workspace just isn't configured yet.

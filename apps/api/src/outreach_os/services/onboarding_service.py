@@ -87,13 +87,26 @@ async def get_status(
         .all()
     )
     connected_llm = [c for c in creds if c.kind in llm_kinds]
-    verified_llm = [c for c in connected_llm if c.last_verified_at is not None]
     env_connected = [p for p in PROVIDERS if env_credentials(p.provider) is not None]
     verified_providers = (tenant.onboarding_state or {}).get("verified_providers", {}) if tenant else {}
+    # A provider counts as verified only while it is still configured AND has
+    # a verified timestamp, using the same env-first precedence as the
+    # providers listing. A stamp left behind after the key was removed from
+    # .env must not keep this step ticked.
+    env_provider_names = {p.provider for p in env_connected}
+    verified_kinds = {c.kind for c in connected_llm if c.last_verified_at is not None}
+    n_providers_verified = sum(
+        1
+        for p in PROVIDERS
+        if (
+            bool(verified_providers.get(p.provider))
+            if p.provider in env_provider_names
+            else p.credential_kind in verified_kinds
+        )
+    )
     llm_key_done = bool(connected_llm) or bool(env_connected)
-    llm_verified_done = bool(verified_llm) or bool(verified_providers)
+    llm_verified_done = n_providers_verified > 0
     n_providers_connected = len(connected_llm) + len(env_connected)
-    n_providers_verified = len(verified_llm) + len(verified_providers)
 
     n_mailboxes = await _count(session, Mailbox, tenant_id)
     n_leads = await _count(session, Lead, tenant_id)
@@ -105,10 +118,9 @@ async def get_status(
             key="llm_key",
             title="Connect an AI provider",
             description=(
-                "Add your own API key under Settings, or set "
-                "<PROVIDER>_API_KEY in .env and restart the API. It is "
-                "encrypted with a key unique to your workspace, and every "
-                "draft is billed to your provider account."
+                "Set <PROVIDER>_API_KEY (for example OPENAI_API_KEY) in .env "
+                "and restart the API. Keys are read from .env only, and every "
+                "draft is billed to your own provider account."
             ),
             done=llm_key_done,
             required=True,

@@ -26,7 +26,7 @@ of the SAME loop that used it, right before that loop closes -- forcing the
 next call in the process to lazily rebuild a fresh engine bound to its own
 new loop.
 
-Both cases below run on a spawned thread (not directly in the test body) so
+The test below runs on a spawned thread (not directly in the test body) so
 the result is independent of whatever event loop pytest-asyncio's own
 autouse fixtures may be managing on the main thread -- exactly the "run it
 in a thread with its own loop" pattern `workers/tasks/scrape.py` already
@@ -37,12 +37,10 @@ Celery worker process do.
 """
 from __future__ import annotations
 
-import asyncio
 import threading
 from collections.abc import Callable
 from typing import TypeVar
 
-import pytest
 from sqlalchemy import text
 
 from outreach_os.core.db import reset_for_tests, run_worker_task, session_scope
@@ -76,41 +74,8 @@ def _run_in_thread(fn: Callable[[], _T]) -> _T:
     return box["value"]  # type: ignore[return-value]
 
 
-def test_repeated_asyncio_run_against_the_shared_engine_hits_the_loop_bug() -> None:
-    """RED: reproduces the bug directly against the lower-level primitives
-    `run_worker_task` wraps (`get_engine`/`session_scope`), with no
-    disposal between calls -- i.e. the pre-fix `asyncio.run(coro)` pattern
-    every Celery task wrapper used. The first call establishes the engine
-    on event loop #1; the second call's `asyncio.run` opens event loop #2
-    and reuses the same cached engine, which fails."""
-    reset_for_tests()
-
-    def _twice_no_disposal() -> None:
-        assert asyncio.run(_touch_db()) == 1
-        # The concrete exception is platform-dependent -- both are the same
-        # underlying "reused a connection/pool bound to a now-closed event
-        # loop" bug, surfaced differently by each asyncio event loop impl:
-        #   - Linux (the actual docker image, SelectorEventLoop): RuntimeError,
-        #     "Task ... got Future ... attached to a different loop" (this is
-        #     the exact message that crashed send_due/poll_inboxes live).
-        #   - Windows (this dev box, ProactorEventLoop): pool_pre_ping's
-        #     connection check tries to write on the stale connection's
-        #     transport, whose `_loop._proactor` is already None because the
-        #     first loop was closed -- AttributeError: 'NoneType' object has
-        #     no attribute 'send'.
-        # So assert broadly (any exception) rather than pattern-match text
-        # that only one platform produces.
-        with pytest.raises(Exception):  # noqa: B017, PT011 - deliberately broad, see comment
-            asyncio.run(_touch_db())
-
-    try:
-        _run_in_thread(_twice_no_disposal)
-    finally:
-        reset_for_tests()
-
-
 def test_run_worker_task_survives_repeated_invocations_in_one_process() -> None:
-    """GREEN: the fix. Two back-to-back `run_worker_task` calls on the same
+    """Two back-to-back `run_worker_task` calls on the same
     thread -- simulating two Celery task invocations handled by the same
     forked worker process -- both succeed, because each call disposes the
     engine before its own loop closes."""
