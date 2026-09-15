@@ -185,12 +185,12 @@ PROVIDERS: tuple[ProviderSpec, ...] = (
         credential_kind="llm_groq",
         label="Groq",
         console_url="https://console.groq.com/keys",
-        verify_model="groq/llama-3.1-8b-instant",
+        verify_model="groq/openai/gpt-oss-20b",
         description="Fastest inference for open models. Good for high-volume drafting.",
         models=(
-            ModelSpec("groq/llama-3.1-8b-instant", "Llama 3.1 8B", context_window=131_072, tier="fast"),
-            ModelSpec("groq/llama-3.3-70b-versatile", "Llama 3.3 70B", context_window=131_072),
-            ModelSpec("groq/moonshotai/kimi-k2-instruct", "Kimi K2", context_window=131_072),
+            ModelSpec("groq/openai/gpt-oss-20b", "GPT-OSS 20B", context_window=131_072, tier="fast"),
+            ModelSpec("groq/qwen/qwen3.8-27b", "Qwen3.8 27B", context_window=131_042),
+            ModelSpec("groq/openai/gpt-oss-120b", "GPT-OSS 120B", context_window=131_072),
         ),
     ),
     ProviderSpec(

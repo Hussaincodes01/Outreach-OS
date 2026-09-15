@@ -32,6 +32,7 @@ from outreach_os.services.llm_credentials import (
     UnknownProviderError,
     chat_models,
     embedding_spec,
+    env_credentials,
     load_credentials,
     provider_for_model,
 )
@@ -84,10 +85,18 @@ async def dismiss_onboarding(
 async def _connected_providers(
     db: AsyncSession, tenant_id: uuid.UUID
 ) -> set[str]:
-    """Which providers this tenant actually has a usable credential for."""
+    """Which providers this tenant can actually call.
+
+    A key in the environment / `.env` counts the same as a stored credential,
+    matching how `load_credentials` resolves keys at call time.
+    """
     rows = (await db.execute(select(Credential.kind))).scalars().all()
     kinds = set(rows)
-    return {p.provider for p in PROVIDERS if p.credential_kind in kinds}
+    return {
+        p.provider
+        for p in PROVIDERS
+        if p.credential_kind in kinds or env_credentials(p.provider) is not None
+    }
 
 
 async def _settings_payload(db: AsyncSession, tenant: Tenant) -> LlmSettingsOut:
