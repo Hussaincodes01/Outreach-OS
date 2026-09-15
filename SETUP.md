@@ -195,6 +195,14 @@ docker compose --profile e2e up -d --build
 npm run smoke
 ```
 
+Run the smoke test **once with a real LLM provider key set in `.env`**
+(then `docker compose restart api worker beat`). Without a key, the
+draft-generation checks report `SKIP` (the API answers `428`, and Outreach
+OS never fabricates model output). With a key, the script exercises the full
+live loop: AI draft -> real SMTP send -> real reply captured over IMAP.
+The API test suite covers IMAP -> reply ingestion against GreenMail on its
+own, but only the smoke run proves the draft step against a real provider.
+
 ## Before Pushing
 
 Run:

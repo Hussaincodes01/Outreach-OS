@@ -72,7 +72,7 @@ def test_imap_connection_uses_configured_timeout(monkeypatch, use_ssl: bool) -> 
     class FakeIMAP4(_FakeImap):
         pass
 
-    class FakeIMAP4_SSL(_FakeImap):  # noqa: N801 - mirrors imaplib's name
+    class FakeIMAP4_SSL(_FakeImap):
         pass
 
     monkeypatch.setattr(imaplib, "IMAP4", FakeIMAP4)
@@ -120,32 +120,21 @@ def test_celery_has_task_time_limits_and_beat_entries_expire() -> None:
 # test_phase4_reply.py uses for reply classification.
 
 
-@pytest.fixture
-async def sent_send(client):
+async def _create_sent_send(client, mailbox_payload: dict) -> tuple[str, str]:
+    """Create a mailbox (through the real endpoint) plus an executed Send for
+    the local workspace. The caller must have installed a test LLM client.
+    Returns (mailbox_id, message_id_header)."""
     from outreach_os.core.db import get_session_factory
-    from outreach_os.core.llm import set_llm_client
     from outreach_os.core.tenancy import set_tenant_for_session
     from outreach_os.domain.models.lead import Lead
     from outreach_os.services.local_workspace import LOCAL_TENANT_ID, ensure_local_workspace
     from outreach_os.services.send_service import SendService
-    from tests.fake_llm import FakeLLMClient
     from tests.test_phase4_send import select_sequence_step_for_run
 
-    set_llm_client(FakeLLMClient())
     await ensure_local_workspace()
 
     # Mailbox, through the real endpoint, with imap_host set.
-    r = await client.post(
-        "/v1/mailboxes/smtp",
-        json={
-            "host": "smtp.example.org",
-            "port": 587,
-            "username": "me@example.org",
-            "password": "app-password",
-            "email_address": "me@example.org",
-            "imap_host": "imap.example.org",
-        },
-    )
+    r = await client.post("/v1/mailboxes/smtp", json=mailbox_payload)
     assert r.status_code == 201, r.text
     mailbox_id = r.json()["id"]
     assert r.json()["imap_enabled"] is True
@@ -196,10 +185,29 @@ async def sent_send(client):
         sends = await svc.execute_due(tenant_id=LOCAL_TENANT_ID)
     assert len(sends) == 1
     assert sends[0].status == "sent"
-    message_id = sends[0].message_id_header
+    return str(mailbox_id), str(sends[0].message_id_header)
 
-    yield mailbox_id, message_id
-    set_llm_client(None)
+
+@pytest.fixture
+async def sent_send(client):
+    from outreach_os.core.llm import set_llm_client
+    from tests.fake_llm import FakeLLMClient
+
+    set_llm_client(FakeLLMClient())
+    try:
+        yield await _create_sent_send(
+            client,
+            {
+                "host": "smtp.example.org",
+                "port": 587,
+                "username": "me@example.org",
+                "password": "app-password",
+                "email_address": "me@example.org",
+                "imap_host": "imap.example.org",
+            },
+        )
+    finally:
+        set_llm_client(None)
 
 
 async def test_poll_ingests_reply_for_real_send(client, sent_send) -> None:
@@ -503,3 +511,98 @@ def test_fetch_unseen_against_real_greenmail_imap() -> None:
 
     # Now that it's explicitly been marked seen, it drops out of UNSEEN.
     assert fetch_unseen(cfg) == []
+
+
+async def test_poll_inboxes_captures_real_reply_from_greenmail(client) -> None:
+    """I6: prove IMAP -> ReplyService end to end without an LLM in product code.
+
+    A real Send is created through the test helpers (test-only FakeLLMClient
+    for classification, StubMailer for the outbound send). A real reply is
+    then delivered over SMTP to GreenMail at localhost:3025, addressed to the
+    mailbox and threaded with In-Reply-To set to the Send's Message-ID, and
+    poll_inboxes_async() runs with the REAL fetch_unseen / mark_seen against
+    GreenMail IMAP at localhost:3143. A second poll must ingest nothing new.
+
+    Uses whichever GreenMail (auth disabled) publishes localhost:3025/3143:
+    the dev-infra one, or the root stack's e2e-profile one. Skipped, not
+    failed, when neither is reachable.
+    """
+    import asyncio
+    import smtplib
+    import socket
+    import uuid
+
+    from outreach_os.core.llm import set_llm_client
+    from outreach_os.services.mailbox.inbox import fetch_unseen
+    from outreach_os.workers.tasks.inbox import poll_inboxes_async
+    from tests.fake_llm import FakeLLMClient
+
+    for port in (3025, 3143):
+        try:
+            with socket.create_connection(("localhost", port), timeout=2):
+                pass
+        except OSError:
+            pytest.skip(f"GreenMail (localhost:{port}) is not reachable")
+
+    address = f"i6-{uuid.uuid4().hex[:10]}@example.com"
+    set_llm_client(FakeLLMClient())
+    try:
+        _mailbox_id, send_message_id = await _create_sent_send(
+            client,
+            {
+                "host": "localhost",
+                "port": 3025,
+                "use_tls": False,
+                "username": address,
+                "password": address,
+                "email_address": address,
+                "imap_host": "localhost",
+                "imap_port": 3143,
+                "imap_use_ssl": False,
+            },
+        )
+
+        reply_message_id = f"<i6-reply-{uuid.uuid4().hex}@prospect.example>"
+        reply = EmailMessage()
+        reply["From"] = "Pat Prospect <pat@prospect.example>"
+        reply["To"] = address
+        reply["Subject"] = "Re: Quick question"
+        reply["Message-ID"] = reply_message_id
+        reply["In-Reply-To"] = send_message_id
+        reply["References"] = send_message_id
+        reply.set_content("Real reply over GreenMail SMTP. Tuesday works.")
+        with smtplib.SMTP("localhost", 3025, timeout=10) as smtp:
+            smtp.send_message(reply, from_addr="pat@prospect.example", to_addrs=[address])
+
+        # GreenMail delivers asynchronously; wait until IMAP can see it (PEEK,
+        # so this does not mark it seen).
+        cfg = {
+            "imap_host": "localhost", "imap_port": 3143, "imap_use_ssl": False,
+            "username": address, "password": address,
+        }
+        for _ in range(50):
+            if await asyncio.to_thread(fetch_unseen, cfg):
+                break
+            await asyncio.sleep(0.2)
+        else:
+            pytest.fail("reply never became visible over GreenMail IMAP")
+
+        summary = await poll_inboxes_async()
+        assert summary == {"mailboxes": 1, "ingested": 1, "errors": 0}
+
+        replies = (await client.get("/v1/replies")).json()
+        items = replies["items"] if isinstance(replies, dict) else replies
+        matching = [r for r in items if r["message_id_header"] == reply_message_id]
+        assert len(matching) == 1
+        assert matching[0]["from_email"] == "pat@prospect.example"
+
+        # The real mark_seen flagged it: nothing unseen is left, and a second
+        # poll ingests nothing new.
+        assert await asyncio.to_thread(fetch_unseen, cfg) == []
+        summary2 = await poll_inboxes_async()
+        assert summary2 == {"mailboxes": 1, "ingested": 0, "errors": 0}
+        replies2 = (await client.get("/v1/replies")).json()
+        items2 = replies2["items"] if isinstance(replies2, dict) else replies2
+        assert len(items2) == len(items)
+    finally:
+        set_llm_client(None)

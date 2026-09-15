@@ -162,6 +162,12 @@ Requires the stack running with the `e2e` profile
 a local SMTP+IMAP test server. See [docs/runbook.md](docs/runbook.md) for
 what each check proves.
 
+Run it **once with a real LLM provider key in `.env`** (then
+`docker compose restart api worker beat`). Without a key the draft checks
+report `SKIP`, because the API answers `428` rather than fabricating output;
+with a key the script exercises the whole live loop: AI draft, real SMTP send,
+and the reply captured over IMAP.
+
 ---
 
 ## Documentation
