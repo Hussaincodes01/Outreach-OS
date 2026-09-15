@@ -15,6 +15,11 @@
 # written for host-machine use (localhost ports) and `environment:` takes
 # precedence over `env_file`.
 #
+# Published ports (api 8000, web 3000, greenmail 3025/3143) bind to
+# ${BIND_ADDRESS:-127.0.0.1}, i.e. localhost only by default. There is no
+# login, so only widen this (BIND_ADDRESS=0.0.0.0 in .env) on a trusted
+# network, and add the hostname to ALLOWED_HOSTS too. See docs/runbook.md.
+#
 # Internal DB credentials (outreach/outreach app role, postgres superuser)
 # are fixed by infra/docker/postgres/initdb and are container-internal only.
 
@@ -134,7 +139,7 @@ services:
       <<: *runtime-urls
       GUNICORN_WORKERS: "4"
     ports:
-      - "8000:8000"
+      - "${BIND_ADDRESS:-127.0.0.1}:8000:8000"
 
   worker:
     # Reuse the API image; just run the Celery worker instead of the web server.
@@ -197,7 +202,7 @@ services:
     depends_on:
       - api
     ports:
-      - "3000:3000"
+      - "${BIND_ADDRESS:-127.0.0.1}:3000:3000"
 
   # Local SMTP+IMAP test server for the e2e smoke script. Not part of the
   # default stack — start with `docker compose --profile e2e up -d --build`.
@@ -208,8 +213,8 @@ services:
       # Accept any login; mailboxes are created on first delivery. Test-only server.
       GREENMAIL_OPTS: "-Dgreenmail.setup.test.smtp -Dgreenmail.setup.test.imap -Dgreenmail.auth.disabled -Dgreenmail.hostname=0.0.0.0 -Dgreenmail.verbose"
     ports:
-      - "3025:3025"
-      - "3143:3143"
+      - "${BIND_ADDRESS:-127.0.0.1}:3025:3025"
+      - "${BIND_ADDRESS:-127.0.0.1}:3143:3143"
     profiles: ["e2e"]
 
 volumes:

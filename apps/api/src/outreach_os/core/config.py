@@ -8,7 +8,7 @@ import json
 from functools import lru_cache
 from typing import Annotated, Literal
 
-from pydantic import Field, SecretStr, field_validator, model_validator
+from pydantic import Field, SecretStr, ValidationInfo, field_validator, model_validator
 from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 
 from outreach_os.core.vault import decode_padded_urlsafe_b64
@@ -50,6 +50,17 @@ class Settings(BaseSettings):
     # field validator — so the documented comma-separated form raised
     # SettingsError and the API could not boot in production at all.
     cors_allowed_origins: Annotated[list[str], NoDecode] = Field(default_factory=list)
+
+    # --- Trusted hosts ---
+    # Hostnames the API answers to (TrustedHostMiddleware). Anything else gets
+    # a 400, which blocks DNS-rebinding pages from reaching this login-less API
+    # through the operator's browser. Matched on hostname only, so
+    # `localhost:8000` is allowed by `localhost`. Comma-separated or a JSON
+    # array, like CORS_ALLOWED_ORIGINS. To reach the API from another machine
+    # on your network, add the name or IP you use (and set BIND_ADDRESS).
+    allowed_hosts: Annotated[list[str], NoDecode] = Field(
+        default_factory=lambda: ["localhost", "127.0.0.1"]
+    )
 
     # --- Redis / Celery ---
     redis_url: str = "redis://localhost:6380/0"
@@ -232,29 +243,31 @@ class Settings(BaseSettings):
     # Stub Slack delivery latency in tests.
     notification_slack_request_timeout: int = 5
 
-    @field_validator("cors_allowed_origins", mode="before")
+    @field_validator("cors_allowed_origins", "allowed_hosts", mode="before")
     @classmethod
-    def _split_cors_origins(cls, value: object) -> object:
+    def _split_list_setting(cls, value: object, info: ValidationInfo) -> object:
         """Accept a comma-separated string or a JSON array.
 
-        The field is marked `NoDecode`, so this validator owns BOTH forms —
+        The fields are marked `NoDecode`, so this validator owns BOTH forms —
         pydantic-settings no longer pre-parses the value. Comma-separated is
-        what `.env.production.example` documents and what operators actually
-        write; the JSON array form is kept for backwards compatibility.
+        what `.env.example` documents and what operators actually write; the
+        JSON array form is kept for backwards compatibility.
         """
         if not isinstance(value, str):
             return value
         stripped = value.strip()
         if not stripped:
-            return []
+            # An empty ALLOWED_HOSTS would reject every request, including the
+            # container healthcheck; treat it as "use the localhost default".
+            return ["localhost", "127.0.0.1"] if info.field_name == "allowed_hosts" else []
         if stripped.startswith("["):
             try:
                 return json.loads(stripped)
             except json.JSONDecodeError as exc:
                 raise ValueError(
-                    f"CORS_ALLOWED_ORIGINS looks like JSON but is not valid: {exc}"
+                    f"{(info.field_name or '').upper()} looks like JSON but is not valid: {exc}"
                 ) from exc
-        return [origin.strip() for origin in stripped.split(",") if origin.strip()]
+        return [item.strip() for item in stripped.split(",") if item.strip()]
 
     @model_validator(mode="after")
     def _enforce_production_safety(self) -> Settings:

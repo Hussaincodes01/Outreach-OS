@@ -24,8 +24,15 @@ npm start                              # docker compose up -d --build
 `npm start` is `docker compose up -d --build` against the root
 `docker-compose.yml`. It starts `postgres`, `redis`, `minio`, a one-shot
 `migrate`, then `api`, `worker`, `beat`, and `web`. Only `api` (8000) and
-`web` (3000) are published to the host; Postgres, Redis and MinIO stay on
-the internal Docker network.
+`web` (3000) are published to the host, and only on `BIND_ADDRESS` (default
+`127.0.0.1`, so localhost only); Postgres, Redis and MinIO stay on the
+internal Docker network.
+
+The API also rejects any request whose `Host` header isn't in
+`ALLOWED_HOSTS` (default `localhost,127.0.0.1`) with a `400`. The container
+healthcheck calls `http://localhost:8000/health`, which is allowed. To open
+the stack to a trusted LAN, set `BIND_ADDRESS` and add the LAN name/IP to
+`ALLOWED_HOSTS`; see [SETUP.md](../SETUP.md#network-exposure-bind_address-and-allowed_hosts).
 
 Add `--profile e2e` (or run `docker compose --profile e2e up -d --build`
 directly) to also start GreenMail, a local SMTP+IMAP server used by the
@@ -171,6 +178,12 @@ localhost, in a `production` environment.
 
 Migrations are running as the app role. They must run as the superuser; the
 compose file overrides `DATABASE_URL` for the `migrate` service only.
+
+### Every API request returns `400 Invalid host header`
+
+The `Host` you are using isn't in `ALLOWED_HOSTS`. Add the hostname or IP
+(no port) to `ALLOWED_HOSTS` in `.env` and restart the API
+(`docker compose up -d api`).
 
 ### Drafts fail with a `428`
 

@@ -13,10 +13,18 @@ deliberate design choice for a single-user tool (see
 but it means the API and web app must **never** be reachable by anyone other
 than the operator:
 
-- **Default-safe posture:** bind the stack to `localhost`/a private network
-  only. The shipped `docker-compose.yml` publishes `api` (8000) and `web`
-  (3000) to the host's network interfaces — on a machine with a public IP,
-  that is publicly reachable unless a firewall blocks it.
+- **Default-safe posture:** the shipped `docker-compose.yml` publishes `api`
+  (8000), `web` (3000) and `greenmail` (3025/3143) on `BIND_ADDRESS`, which
+  defaults to `127.0.0.1`, so nothing is reachable from other machines.
+  Setting `BIND_ADDRESS=0.0.0.0` exposes those ports on every interface; on a
+  machine with a public IP that is publicly reachable unless a firewall
+  blocks it.
+- **Host allowlist:** the API rejects any `Host` header not in
+  `ALLOWED_HOSTS` (default `localhost,127.0.0.1`) with a `400`. This stops a
+  malicious web page in the operator's browser from reaching the API through
+  DNS rebinding. It is not authentication: anyone who can reach the port and
+  send an allowed `Host` has full access. For LAN access, add the LAN
+  name/IP to `ALLOWED_HOSTS` together with `BIND_ADDRESS`.
 - **If you need remote access:** put an authenticating reverse proxy in
   front (nginx/Caddy with basic auth or an OAuth gate, a Tailscale/WireGuard
   tunnel, an SSH tunnel, a cloud load balancer with its own auth). The API
@@ -62,7 +70,7 @@ the only supported mailbox transport now); nothing writes to it.
 
 | Threat | Mitigation | Residual risk |
 |---|---|---|
-| Unauthenticated access to the API/web app | None from the app itself — network-level only (bind to localhost, or a reverse proxy with its own auth) | **High if exposed without a proxy.** This is the primary threat in a no-auth build; mitigation is entirely the operator's deployment choice. |
+| Unauthenticated access to the API/web app | Ports bind to `127.0.0.1` by default (`BIND_ADDRESS`) and the API enforces an `ALLOWED_HOSTS` allowlist; beyond that, network-level only (a reverse proxy with its own auth) | **High if exposed without a proxy.** This is the primary threat in a no-auth build; mitigation is entirely the operator's deployment choice. |
 | Cross-tenant data leak | Not applicable in normal single-user operation (one workspace), but the RLS mechanism is still exercised so a future multi-tenant reintroduction doesn't regress silently | Low. |
 | Vault KEK exfiltration | `VAULT_MASTER_KEY` in env; not logged; not in DB | If the env/`.env` leaks, all stored DEKs leak — mailbox passwords and any app-stored provider key. Provider keys read directly from `.env` are exposed the same way `.env` itself is. |
 | `.env` committed or otherwise leaked | `.gitignore`, pre-push secret grep in README/SETUP, never printed by the smoke script or logs | If it happens, rotate every key and the mailbox password, then regenerate `VAULT_MASTER_KEY` (accepting the existing-ciphertext loss) and `INBOUND_WEBHOOK_SECRET`. |

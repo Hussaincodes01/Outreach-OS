@@ -49,6 +49,8 @@ your provider key(s) — see below.
 | `LOG_LEVEL` | API log verbosity |
 | `NEXT_PUBLIC_API_URL` | Browser-visible API base URL. Inlined into the client bundle at build time |
 | `CORS_ALLOWED_ORIGINS` | Comma-separated browser origins allowed to call the API. **Required in production** |
+| `BIND_ADDRESS` | Host interface `docker compose` publishes api/web/greenmail on. Default `127.0.0.1` (localhost only) |
+| `ALLOWED_HOSTS` | Comma-separated (or JSON array) hostnames the API answers to; other `Host` headers get `400`. Default `localhost,127.0.0.1` |
 | `PUBLIC_BASE_URL` | Public API URL embedded in tracking and unsubscribe links. **Required in production**, and may not be localhost |
 | `CELERY_TASK_ALWAYS_EAGER` | Runs background jobs inline. Must be `false` in production |
 | `SEND_DUE_INTERVAL_SECONDS` | How often the beat schedule fires `send_due` (default 60) |
@@ -56,6 +58,30 @@ your provider key(s) — see below.
 
 There is no `JWT_SECRET`, `NEXTAUTH_SECRET`, or `NEXTAUTH_URL` — Outreach OS
 has no login. Every request acts as the one built-in local workspace.
+
+## Network Exposure: `BIND_ADDRESS` And `ALLOWED_HOSTS`
+
+Outreach OS has no login, so by default it is reachable from this machine
+only:
+
+- `BIND_ADDRESS` (default `127.0.0.1`) is the host interface the root
+  `docker-compose.yml` publishes `api` (8000), `web` (3000) and `greenmail`
+  (3025/3143) on.
+- `ALLOWED_HOSTS` (default `localhost,127.0.0.1`) is the list of hostnames
+  the API accepts in the `Host` header. Anything else gets a `400`, which also
+  blocks DNS-rebinding attacks from web pages open in your browser. The port
+  is ignored, so `localhost:8000` matches `localhost`.
+
+To use it from another machine on a **trusted** network (ideally behind an
+authenticating reverse proxy, see [docs/threat-model.md](docs/threat-model.md)):
+
+1. In `.env`, set `BIND_ADDRESS=0.0.0.0` (or the one LAN IP to listen on).
+2. Add the name or IP you will browse to:
+   `ALLOWED_HOSTS=localhost,127.0.0.1,192.168.1.20`.
+3. Set `NEXT_PUBLIC_API_URL=http://192.168.1.20:8000` and add
+   `http://192.168.1.20:3000` to `CORS_ALLOWED_ORIGINS`.
+4. Rebuild and restart: `docker compose up -d --build` (the API URL is baked
+   into the web bundle at build time).
 
 ## Provider API Keys Live In `.env`
 

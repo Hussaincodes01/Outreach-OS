@@ -8,6 +8,7 @@ from typing import TypeAlias
 import sentry_sdk
 from fastapi import FastAPI, Request, Response, status
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.middleware.trustedhost import TrustedHostMiddleware
 from fastapi.responses import JSONResponse
 
 from outreach_os.api.v1 import (
@@ -149,6 +150,12 @@ app.add_middleware(
     allow_methods=["GET", "POST", "PATCH", "DELETE", "OPTIONS"],
     allow_headers=["Content-Type"],
 )
+
+# Host allowlist. Added last so it is the outermost middleware: a request for
+# an unknown Host is rejected (400) before anything else runs. Healthchecks
+# curl http://localhost:8000/health from inside the container, which matches
+# `localhost`.
+app.add_middleware(TrustedHostMiddleware, allowed_hosts=_settings.allowed_hosts)
 
 
 # --- error mapping ---

@@ -36,6 +36,9 @@ os.environ.setdefault("CELERY_TASK_ALWAYS_EAGER", "true")
 os.environ.setdefault("AUTH_RATE_LIMITS_PER_MINUTE", '{"webhook": 10000}')
 # Set inbound webhook secret for tests
 os.environ.setdefault("INBOUND_WEBHOOK_SECRET", "test-webhook-secret")
+# The httpx test client uses base_url="http://test", so its Host header is
+# `test`. TrustedHostMiddleware reads this at app import, below.
+os.environ.setdefault("ALLOWED_HOSTS", "localhost,127.0.0.1,test")
 
 import uuid as _uuid
 
