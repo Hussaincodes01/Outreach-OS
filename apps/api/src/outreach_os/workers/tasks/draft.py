@@ -59,9 +59,9 @@ def generate_draft(
 
     This function IS the work. Whether it executes in a worker process or
     inline is Celery's decision (`task_always_eager`); either way the body
-    must run, so it must not branch on that setting. The enqueue-vs-run-
-    inline choice belongs to the caller, and already lives in
-    `DraftService.dispatch_generate_draft`.
+    must run, so it must not branch on that setting. The API no longer
+    enqueues it (`DraftService.dispatch_generate_draft` runs in-process); it
+    stays registered so messages already on the broker still execute.
     """
     started = datetime.utcnow()
     log.info(

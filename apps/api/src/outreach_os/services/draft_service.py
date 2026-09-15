@@ -391,7 +391,7 @@ class DraftService:
         result = await self.session.execute(q)
         return list(result.scalars().all())
 
-    # --- Dispatch (eager-mode-aware) ---
+    # --- Dispatch ---
 
     async def dispatch_generate_draft(
         self,
@@ -402,42 +402,22 @@ class DraftService:
         step_id: uuid.UUID,
         force_regenerate: bool = False,
     ) -> DraftGenerationResult:
-        """Run the agent pipeline, in-process in tests, queued to Celery in prod.
+        """Run the agent pipeline in-process and return the finished draft.
 
-        In production we return a placeholder `DraftGenerationResult` (status=pending)
-        after a Celery worker picks up the task from the broker. In tests
-        (eager mode) we `await` the async core directly so the same event
-        loop drives both the HTTP request and the worker logic.
+        A single on-demand draft takes seconds, and the caller responds with
+        the draft itself. It used to be queued to Celery whenever eager mode
+        was off, returning a placeholder whose random `draft_id` could never
+        be found, so every request 500'd in the deployed stack. Bulk drafting
+        for sequences already runs inside the worker (`SendService`).
         """
-        from outreach_os.core.config import get_settings
+        from outreach_os.workers.tasks.draft import generate_draft_async
 
-        settings = get_settings()
-        if settings.celery_task_always_eager:
-            from outreach_os.workers.tasks.draft import generate_draft_async
-
-            return await generate_draft_async(
-                tenant_id=tenant_id,
-                campaign_id=campaign_id,
-                lead_id=lead_id,
-                step_id=step_id,
-                force_regenerate=force_regenerate,
-            )
-        from outreach_os.workers.tasks.draft import generate_draft
-
-        generate_draft.delay(
-            str(tenant_id), str(campaign_id), str(lead_id), str(step_id), force_regenerate
-        )
-        # Return a placeholder — the worker will populate the draft row
-        # in the background. Callers should poll GET /v1/drafts/{id} or
-        # watch the campaign's draft list.
-        return DraftGenerationResult(
-            draft_id=uuid.uuid4(),
-            agent_run_id=uuid.uuid4(),
-            status="pending",
-            subject=None,
-            body_preview=None,
-            model_used=None,
-            error=None,
+        return await generate_draft_async(
+            tenant_id=tenant_id,
+            campaign_id=campaign_id,
+            lead_id=lead_id,
+            step_id=step_id,
+            force_regenerate=force_regenerate,
         )
 
 
