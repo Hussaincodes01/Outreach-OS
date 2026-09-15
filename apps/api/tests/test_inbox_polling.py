@@ -309,6 +309,82 @@ async def test_poll_mark_seen_failure_does_not_lose_already_ingested_replies(cli
     assert any(r["message_id_header"] == "<durable-reply@prospect.example>" for r in items)
 
 
+async def _add_second_imap_mailbox(client) -> str:
+    r = await client.post(
+        "/v1/mailboxes/smtp",
+        json={
+            "host": "smtp.example.org",
+            "port": 587,
+            "username": "second@example.org",
+            "password": "app-password-2",
+            "email_address": "second@example.org",
+            "imap_host": "imap2.example.org",
+        },
+    )
+    assert r.status_code == 201, r.text
+    return str(r.json()["id"])
+
+
+async def test_poll_failing_mailbox_does_not_abort_later_mailboxes(client, sent_send) -> None:
+    """C1 regression: the FIRST mailbox polled fails at the mailbox level
+    (fetch raises OSError). The rollback that follows must not expire the
+    second mailbox's ORM state -- the second mailbox is still polled and its
+    reply ingested, and the run reports one error instead of crashing with
+    MissingGreenlet."""
+    from outreach_os.workers.tasks.inbox import poll_inboxes_async
+
+    _mailbox_id, message_id = sent_send
+    await _add_second_imap_mailbox(client)
+    raw = _raw_reply(message_id, message_id="<second-mailbox-reply@prospect.example>")
+    calls: list[str] = []
+
+    def _fetch(cfg: dict) -> list[tuple[bytes, bytes]]:
+        calls.append(str(cfg["username"]))
+        if len(calls) == 1:
+            raise OSError("imap host unreachable")
+        return [(b"1", raw)]
+
+    summary = await poll_inboxes_async(fetch=_fetch, mark_seen=lambda cfg, uids: None)
+    assert summary == {"mailboxes": 2, "ingested": 1, "errors": 1}
+    assert len(calls) == 2
+    replies = (await client.get("/v1/replies")).json()
+    items = replies["items"] if isinstance(replies, dict) else replies
+    assert any(
+        r["message_id_header"] == "<second-mailbox-reply@prospect.example>" for r in items
+    )
+
+
+async def test_poll_duplicate_in_first_mailbox_does_not_abort_later_mailboxes(
+    client, sent_send
+) -> None:
+    """C1 regression: the first mailbox's batch contains a duplicate
+    Message-ID, which forces ReplyService.ingest's per-message rollback. That
+    rollback must not break the next mailbox -- its reply still ingests and
+    no exception escapes."""
+    from outreach_os.workers.tasks.inbox import poll_inboxes_async
+
+    _mailbox_id, message_id = sent_send
+    await _add_second_imap_mailbox(client)
+    first_raw = _raw_reply(message_id, message_id="<mb1-reply@prospect.example>")
+    dup_raw = _raw_reply(message_id, message_id="<mb1-reply@prospect.example>")
+    other_raw = _raw_reply(message_id, message_id="<mb2-reply@prospect.example>")
+    calls: list[str] = []
+
+    def _fetch(cfg: dict) -> list[tuple[bytes, bytes]]:
+        calls.append(str(cfg["username"]))
+        if len(calls) == 1:
+            return [(b"1", first_raw), (b"2", dup_raw)]
+        return [(b"7", other_raw)]
+
+    summary = await poll_inboxes_async(fetch=_fetch, mark_seen=lambda cfg, uids: None)
+    assert summary == {"mailboxes": 2, "ingested": 2, "errors": 0}
+    replies = (await client.get("/v1/replies")).json()
+    items = replies["items"] if isinstance(replies, dict) else replies
+    ids = {r["message_id_header"] for r in items}
+    assert "<mb1-reply@prospect.example>" in ids
+    assert "<mb2-reply@prospect.example>" in ids
+
+
 def test_fetch_unseen_against_real_greenmail_imap() -> None:
     """Exercise the real IMAP client against the dev-stack GreenMail server
     (no auth; any mailbox is auto-created on first delivery). Skipped, not
