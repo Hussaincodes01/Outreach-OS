@@ -88,10 +88,13 @@ def _connect(cfg: dict[str, Any]) -> imaplib.IMAP4:
     """
     host = str(cfg["imap_host"])
     port = int(cfg.get("imap_port") or 993)
+    # A socket timeout on every connection: without one, a server that accepts
+    # the TCP connection and then stalls hangs the poll indefinitely.
+    timeout = get_settings().imap_timeout_seconds
     client: imaplib.IMAP4 = (
-        imaplib.IMAP4_SSL(host, port)
+        imaplib.IMAP4_SSL(host, port, timeout=timeout)
         if cfg.get("imap_use_ssl", True)
-        else imaplib.IMAP4(host, port)
+        else imaplib.IMAP4(host, port, timeout=timeout)
     )
     client.login(str(cfg["username"]), str(cfg["password"]))
     client.select("INBOX")

@@ -180,6 +180,15 @@ class Settings(BaseSettings):
     # How many days back to search the mailbox for UNSEEN messages. Bounds the
     # IMAP SEARCH window so a long-dormant mailbox doesn't scan its entire history.
     inbox_poll_lookback_days: int = 14
+    # Socket timeout (seconds) for every IMAP connection. Without it a mail
+    # server that accepts the TCP connection and then stalls hangs the poll
+    # (and the Celery worker slot running it) indefinitely.
+    imap_timeout_seconds: int = 30
+    # Default Celery time limits (seconds) for every task. The soft limit raises
+    # SoftTimeLimitExceeded inside the task so it can clean up; the hard limit
+    # kills the worker child if the task still hasn't finished.
+    celery_task_soft_time_limit_seconds: int = 300
+    celery_task_time_limit_seconds: int = 360
     # Per-IP rate limits (per minute) for public endpoints, e.g. {"webhook": 100}.
     auth_rate_limits_per_minute: dict[str, int] = Field(default_factory=dict)
 

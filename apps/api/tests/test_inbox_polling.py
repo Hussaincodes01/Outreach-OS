@@ -48,6 +48,69 @@ def test_poll_inboxes_on_beat_schedule() -> None:
     assert "outreach_os.workers.poll_inboxes" in tasks
 
 
+@pytest.mark.parametrize("use_ssl", [True, False])
+def test_imap_connection_uses_configured_timeout(monkeypatch, use_ssl: bool) -> None:
+    """I2: every IMAP connection gets a socket timeout, so a stalled server
+    cannot hang the poll (and the worker slot) forever."""
+    import imaplib
+
+    from outreach_os.core.config import get_settings
+    from outreach_os.services.mailbox import inbox as inbox_module
+
+    recorded: list[dict] = []
+
+    class _FakeImap:
+        def __init__(self, host: str, port: int, **kwargs) -> None:
+            recorded.append({"cls": type(self).__name__, "host": host, "port": port, **kwargs})
+
+        def login(self, username: str, password: str) -> None:
+            pass
+
+        def select(self, mailbox: str) -> None:
+            pass
+
+    class FakeIMAP4(_FakeImap):
+        pass
+
+    class FakeIMAP4_SSL(_FakeImap):  # noqa: N801 - mirrors imaplib's name
+        pass
+
+    monkeypatch.setattr(imaplib, "IMAP4", FakeIMAP4)
+    monkeypatch.setattr(imaplib, "IMAP4_SSL", FakeIMAP4_SSL)
+
+    inbox_module._connect(
+        {
+            "imap_host": "imap.example.org",
+            "imap_port": 993 if use_ssl else 143,
+            "imap_use_ssl": use_ssl,
+            "username": "me@example.org",
+            "password": "app-password",
+        }
+    )
+    assert len(recorded) == 1
+    assert recorded[0]["cls"] == ("FakeIMAP4_SSL" if use_ssl else "FakeIMAP4")
+    assert recorded[0]["timeout"] == get_settings().imap_timeout_seconds
+    assert get_settings().imap_timeout_seconds == 30
+
+
+def test_celery_has_task_time_limits_and_beat_entries_expire() -> None:
+    """I2: tasks have default soft/hard time limits, and the frequent beat
+    entries expire so a backlog of stale queued runs is dropped rather than
+    executed late in a burst."""
+    from outreach_os.core.config import get_settings
+
+    settings = get_settings()
+    assert settings.celery_task_soft_time_limit_seconds == 300
+    assert settings.celery_task_time_limit_seconds == 360
+    assert celery_app.conf.task_soft_time_limit == settings.celery_task_soft_time_limit_seconds
+    assert celery_app.conf.task_time_limit == settings.celery_task_time_limit_seconds
+    schedule = celery_app.conf.beat_schedule
+    for name in ("outreach_os.workers.send_due", "outreach_os.workers.poll_inboxes"):
+        expires = schedule[name].get("options", {}).get("expires")
+        assert expires is not None, name
+        assert 0 < expires <= float(schedule[name]["schedule"]), name
+
+
 # --- sent_send fixture -------------------------------------------------
 #
 # Builds: SMTP mailbox (with imap_host) -> lead -> campaign/sequence ->

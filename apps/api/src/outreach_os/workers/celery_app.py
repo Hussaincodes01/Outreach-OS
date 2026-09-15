@@ -29,6 +29,11 @@ celery_app.conf.update(
     broker_connection_retry_on_startup=True,
     task_always_eager=settings.celery_task_always_eager,
     task_eager_propagates=True,
+    # Default time limits for every task, so a hung network call can't hold a
+    # worker slot forever. The soft limit raises SoftTimeLimitExceeded inside
+    # the task; the hard limit kills the worker child.
+    task_soft_time_limit=settings.celery_task_soft_time_limit_seconds,
+    task_time_limit=settings.celery_task_time_limit_seconds,
     # Phase 6 beat schedule.
     beat_schedule={
         "outreach_os.notifications.send_email_digest": {
@@ -36,10 +41,13 @@ celery_app.conf.update(
             "schedule": float(settings.notification_email_digest_interval_seconds),
         },
         # Fires due SequenceStep rows through the mailbox's own SMTP. Without
-        # this entry `send_due` exists but nothing ever calls it.
+        # this entry `send_due` exists but nothing ever calls it. `expires`
+        # drops a queued run the worker didn't start before the next one is
+        # due, so a backlog never replays as a burst.
         "outreach_os.workers.send_due": {
             "task": "outreach_os.workers.send_due",
             "schedule": float(settings.send_due_interval_seconds),
+            "options": {"expires": float(settings.send_due_interval_seconds)},
         },
         # Captures replies for mailboxes that only offer IMAP (no inbound
         # webhook). Without this entry `poll_inboxes` exists but nothing
@@ -47,6 +55,7 @@ celery_app.conf.update(
         "outreach_os.workers.poll_inboxes": {
             "task": "outreach_os.workers.poll_inboxes",
             "schedule": float(settings.inbox_poll_interval_seconds),
+            "options": {"expires": float(settings.inbox_poll_interval_seconds)},
         },
     },
 )
