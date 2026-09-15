@@ -1,4 +1,10 @@
-"""GDPR compliance endpoints: data export (DSAR) and right to erasure."""
+"""GDPR compliance endpoints: data export (DSAR).
+
+There is deliberately no erasure endpoint in the single-user build. The old
+`DELETE /v1/gdpr/me` marked the only workspace's tenant `deleted`, which
+silently stopped every sequence send with no way to restore it. To wipe all
+data, stop the stack with `docker compose down -v` (see docs/runbook.md).
+"""
 from __future__ import annotations
 
 import json
@@ -8,7 +14,7 @@ import uuid
 from collections.abc import AsyncIterator
 from datetime import datetime
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends
 from fastapi.responses import StreamingResponse
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -17,7 +23,6 @@ from outreach_os.api.deps import AuthContext, get_current_user, get_scoped_db
 from outreach_os.core.audit import write_audit_event
 from outreach_os.core.db import session_scope
 from outreach_os.core.tenancy import set_tenant_for_session
-from outreach_os.domain.models.tenant import Tenant
 
 log = logging.getLogger(__name__)
 
@@ -93,47 +98,6 @@ async def export_my_data(
         media_type="application/x-ndjson",
         headers={"Content-Disposition": f"attachment; filename=gdpr-export-{user.tenant_id}.ndjson"}
     )
-
-
-@router.delete("/me", status_code=status.HTTP_202_ACCEPTED)
-async def delete_my_account(
-    user: AuthContext = Depends(get_current_user),
-    db: AsyncSession = Depends(get_scoped_db),
-) -> dict[str, object]:
-    """Right to erasure: Soft-delete tenant and anonymize PII.
-
-    - Marks tenant as 'deleted' (status)
-    - Anonymizes the email in the user table (the only PII column there)
-    - Audit log remains immutable (hash-chained)
-    - Actual purge after 30-day grace period (admin job)
-    """
-    # Verify tenant exists and user is owner
-    tenant = await db.get(Tenant, user.tenant_id)
-    if not tenant:
-        raise HTTPException(status_code=404, detail="tenant not found")
-
-    # Anonymize user PII. NOTE: AppUser stores no name columns — email is the
-    # only personal identifier on the row. (Assigning `first_name`/`last_name`
-    # here would just set throwaway Python attributes that never reach the DB.)
-    from outreach_os.domain.models.user import AppUser
-    user_row = await db.get(AppUser, user.user_id)
-    if user_row:
-        user_row.email = f"deleted-{user.user_id}@gdpr.local"
-        user_row.is_active = False
-
-    # Mark tenant deleted
-    tenant.status = "deleted"
-    tenant.name = f"Deleted Tenant {tenant.id}"
-
-    await db.flush()
-
-    await write_audit_event(
-        db, action="gdpr.erasure_requested", target_type="tenant",
-        target_id=user.tenant_id, actor_kind="user", actor_id=user.user_id,
-        payload={"grace_period_days": 30}
-    )
-
-    return {"status": "deletion_scheduled", "grace_period_days": 30}
 
 
 @router.get("/export/status")

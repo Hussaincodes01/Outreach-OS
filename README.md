@@ -41,7 +41,7 @@ It is built for:
 | Reply engine | IMAP polling and an inbound webhook, both matching replies to the original send |
 | Meetings | Availability windows and meeting lifecycle models (calendar sync is a stub — see Known Limitations) |
 | Notifications | In-app notifications and Slack webhooks |
-| Compliance | GDPR export/erasure, suppression lists, and audit logs |
+| Compliance | GDPR data export, suppression lists, and audit logs (wipe all data with `docker compose down -v`) |
 
 ## API Keys In `.env`
 

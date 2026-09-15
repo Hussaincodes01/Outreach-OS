@@ -268,6 +268,26 @@ alongside, but not in the same place.
 
 ---
 
+## Exporting and wiping data
+
+- **Export:** `GET /v1/gdpr/export` streams every workspace row as NDJSON
+  (one `{"table": ..., "data": ...}` object per line).
+- **Wipe everything:** there is no in-app erasure endpoint in the single-user
+  build (the old `DELETE /v1/gdpr/me` marked the only workspace deleted and
+  silently stopped all sends). To delete all data, remove the stack together
+  with its volumes:
+
+  ```bash
+  docker compose down -v
+  ```
+
+  This deletes the `postgres-data`, `redis-data` and `minio-data` volumes,
+  i.e. every lead, draft, send, reply, stored credential and object. It
+  cannot be undone, so take a backup first if you might want the data back.
+  Provider keys in `.env` are untouched; delete them there yourself.
+
+---
+
 ## Not yet covered
 
 Honest gaps, so nobody assumes otherwise:

@@ -74,6 +74,16 @@ the only supported mailbox transport now); nothing writes to it.
 | SQL injection | SQLAlchemy parameterised queries + RLS as a backstop | Any raw `text()` added later must be reviewed. |
 | Dependency supply chain | Dependabot + `pip-audit` (CI) | Known-CVE window. |
 
+## Data export and deletion
+
+- `GET /v1/gdpr/export` streams all workspace data as NDJSON. Like every
+  other endpoint it is unauthenticated, so it is protected only by the same
+  network-level controls described above.
+- There is **no in-app erasure endpoint.** An unauthenticated delete of the
+  only workspace would let anyone who reaches the API silently stop all
+  sending. Wiping all data is an operator action on the host:
+  `docker compose down -v` removes the Postgres, Redis and MinIO volumes.
+
 ## Out of scope for this build
 
 - Paid external pentest.
