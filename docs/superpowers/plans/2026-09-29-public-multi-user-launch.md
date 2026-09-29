@@ -17,7 +17,7 @@
 - Never commit `.env`, `.env.production`, `apps/web/.env.local`, or any real secret. Never print secret values.
 - API gates (from `apps/api`): `.venv/Scripts/python -m ruff check .`, `.venv/Scripts/python -m mypy src` (strict), full pytest passing. pytest's summary line is swallowed in this shell: always pass `-p no:cacheprovider --junitxml=<file>` and read tests/failures/errors/skipped from the XML. Never run two pytest processes at once. Run the full suite in foreground chunks if it would exceed 10 minutes.
 - Web gates (repo root): `npm run lint:web`, `npm run typecheck:web`, `npm run build:web`.
-- Dev infra (tests): `docker compose -f infra/docker/docker-compose.dev.yml up -d postgres redis minio minio-init` → Postgres `localhost:5433`, Redis `6380`, MinIO `9000`. Ports 5432/6379 belong to another project (`wa_postgres`, `wa_redis`) — never touch them.
+- Dev infra (tests): `docker compose -f infra/docker/docker-compose.dev.yml up -d postgres redis rustfs` → Postgres `localhost:5433`, Redis `6380`, RustFS (S3) `9000`. Ports 5432/6379 belong to another project (`wa_postgres`, `wa_redis`) — never touch them.
 - RLS stays enforced; runtime connects as the non-superuser `outreach` role; scoped sessions call `set_tenant_for_session`.
 - Existing Alembic migrations are never edited; new migrations are allowed (next number `0019`).
 - Restoring code from history: use `git show 0147bed:<path>` (and the other commits named per task). Restore, then adapt to today's code — never overwrite a file wholesale without re-applying fixes made since (listed per task).
@@ -110,7 +110,7 @@ RUN pip install --prefix=/install --no-deps "./apps/api"
 ```
 
 Runtime stage keeps `COPY --from=builder /install /usr/local`, the playwright install layer, and `COPY apps/api /app` (alembic files needed at runtime) — in that order.
-3. CI (`.github/workflows/ci.yml`): the MinIO `docker run` uses `quay.io/minio/minio:RELEASE.2025-04-22T22-12-26Z` (confirm it is already so; the final fix wave changed it); add a step that fails if `requirements.lock` is stale: `pip-compile --extra prod --output-file /tmp/lock pyproject.toml && diff <(grep -v '^#' requirements.lock) <(grep -v '^#' /tmp/lock)`.
+3. CI (`.github/workflows/ci.yml`): the object-storage step uses `rustfs/rustfs:1.0.0` (MinIO images are no longer pullable); add a step that fails if `requirements.lock` is stale: `pip-compile --extra prod --output-file /tmp/lock pyproject.toml && diff <(grep -v '^#' requirements.lock) <(grep -v '^#' /tmp/lock)`.
 4. Build the image once to prove the lock installs: `docker compose build api` (run in the foreground in ≤10-minute calls; re-run on timeout — cached layers resume). Then change one line of any `.py` file (and revert) and rebuild to confirm only the source layers rebuild (report the elapsed time of that second build).
 
 - [ ] **Step 4: Verify**
