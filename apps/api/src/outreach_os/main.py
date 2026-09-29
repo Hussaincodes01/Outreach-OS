@@ -13,6 +13,7 @@ from fastapi.responses import JSONResponse
 
 from outreach_os.api.v1 import (
     audit,
+    auth,
     campaigns,
     credentials,
     crm,
@@ -40,6 +41,7 @@ from outreach_os.api.v1 import (
 from outreach_os.core.config import get_settings
 from outreach_os.core.db import dispose_engine
 from outreach_os.core.errors import (
+    AuthError,
     ConflictError,
     MailError,
     NotFoundError,
@@ -48,7 +50,6 @@ from outreach_os.core.errors import (
     ValidationError,
 )
 from outreach_os.core.logging import configure_logging, get_logger
-from outreach_os.services.local_workspace import ensure_local_workspace
 
 # Starlette's BaseHTTPMiddleware dispatch signature.
 _CallNext: TypeAlias = Callable[[Request], Awaitable[Response]]
@@ -64,12 +65,6 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         environment=settings.environment,
         database_host=settings.database_url.split("@")[-1],
     )
-    try:
-        await ensure_local_workspace()
-    except Exception as exc:
-        # Keep booting: /health must still answer while the DB is down, and
-        # the workspace is created again on the first request.
-        log.warning("local_workspace_bootstrap_failed", error=str(exc)[:200])
     if settings.sentry_dsn and settings.environment != "development":
         sentry_sdk.init(
             dsn=settings.sentry_dsn.get_secret_value(),
@@ -147,11 +142,12 @@ app.add_middleware(
     allow_origins=_cors_origins,
     allow_credentials=True,
     allow_methods=["GET", "POST", "PATCH", "DELETE", "OPTIONS"],
-    allow_headers=["Content-Type"],
+    allow_headers=["Authorization", "Content-Type"],
 )
 
 # Host allowlist. Added last so it is the outermost middleware: a request for
-# an unknown Host is rejected (400) before anything else runs. Healthchecks
+# an unknown Host is rejected (400) before anything else runs, which also
+# blocks DNS-rebinding pages from reaching the API. Healthchecks
 # curl http://localhost:8000/health from inside the container, which matches
 # `localhost`.
 app.add_middleware(TrustedHostMiddleware, allowed_hosts=_settings.allowed_hosts)
@@ -166,6 +162,7 @@ async def _handle_domain_error(request: Request, exc: OutreachError) -> JSONResp
     log.warning("domain_error", error=str(exc), path=request.url.path)
     status_map = {
         NotFoundError: status.HTTP_404_NOT_FOUND,
+        AuthError: status.HTTP_401_UNAUTHORIZED,
         ValidationError: status.HTTP_422_UNPROCESSABLE_ENTITY,
         MailError: status.HTTP_502_BAD_GATEWAY,
         ConflictError: status.HTTP_409_CONFLICT,
@@ -187,6 +184,7 @@ async def _handle_domain_error(request: Request, exc: OutreachError) -> JSONResp
 # --- routes ---
 
 
+app.include_router(auth.router, prefix="/v1")
 app.include_router(tenants.router, prefix="/v1")
 app.include_router(credentials.router, prefix="/v1")
 app.include_router(onboarding.router, prefix="/v1")

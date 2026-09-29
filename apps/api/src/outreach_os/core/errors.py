@@ -10,6 +10,10 @@ class NotFoundError(OutreachError):
     pass
 
 
+class AuthError(OutreachError):
+    """The caller is not (or no longer) allowed in. Mapped to 401."""
+
+
 class ValidationError(OutreachError):
     pass
 

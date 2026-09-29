@@ -53,8 +53,8 @@ class Settings(BaseSettings):
 
     # --- Trusted hosts ---
     # Hostnames the API answers to (TrustedHostMiddleware). Anything else gets
-    # a 400, which blocks DNS-rebinding pages from reaching this login-less API
-    # through the operator's browser. Matched on hostname only, so
+    # a 400, which blocks DNS-rebinding pages from reaching the API through a
+    # user's browser under a hostname the attacker controls. Matched on hostname only, so
     # `localhost:8000` is allowed by `localhost`. Comma-separated or a JSON
     # array, like CORS_ALLOWED_ORIGINS. To reach the API from another machine
     # on your network, add the name or IP you use (and set BIND_ADDRESS).
@@ -66,6 +66,16 @@ class Settings(BaseSettings):
     redis_url: str = "redis://localhost:6380/0"
     celery_broker_url: str = "redis://localhost:6380/1"
     celery_result_backend: str = "redis://localhost:6380/2"
+
+    # --- Auth ---
+    jwt_secret: SecretStr = Field(default=SecretStr("change-me"))
+    # JSON dict of kid->secret for key rotation, e.g. '{"1": "secret1", "2": "secret2"}'
+    jwt_secret_keys: SecretStr | None = None
+    # Active key ID for signing new tokens (must exist in jwt_secret_keys)
+    jwt_active_key_id: str = "1"
+    jwt_alg: str = "HS256"
+    jwt_access_ttl_minutes: int = 15
+    jwt_refresh_ttl_days: int = 30
 
     # --- Vault ---
     # 32-byte Fernet key, base64-encoded. Generate with `openssl rand -base64 32`.
@@ -92,9 +102,12 @@ class Settings(BaseSettings):
     # From address on platform email. Must be a domain you control, or resets
     # land in spam.
     transactional_from_email: str = "no-reply@outreach-os.local"
-    # Public URL of the WEB app (not the API): where the operator's browser
-    # reaches the UI, for any link that should open the web app.
+    # Public URL of the WEB app (not the API). Reset and verification links
+    # point here, so it has to be where the user's browser can reach the UI.
     web_base_url: str = "http://localhost:3000"
+    # Lifetime of password-reset and email-verification links.
+    password_reset_ttl_minutes: int = 60
+    email_verification_ttl_hours: int = 48
 
     # --- Phase 2: Lead scraping ---
     # Per-tenant, per-source rate limits (requests per minute). Source names
@@ -200,7 +213,8 @@ class Settings(BaseSettings):
     # kills the worker child if the task still hasn't finished.
     celery_task_soft_time_limit_seconds: int = 300
     celery_task_time_limit_seconds: int = 360
-    # Per-IP rate limits (per minute) for public endpoints, e.g. {"webhook": 100}.
+    # Per-IP rate limits (per minute) for the auth endpoints and public
+    # webhooks, e.g. {"login": 10, "webhook": 100}. Override via env.
     auth_rate_limits_per_minute: dict[str, int] = Field(default_factory=dict)
 
     # --- Phase 5: meeting booking + CRM sync ---
@@ -278,6 +292,10 @@ class Settings(BaseSettings):
             return self
 
         problems: list[str] = []
+
+        jwt = self.jwt_secret.get_secret_value()
+        if not jwt or jwt in ("change-me", "change-me-to-a-long-random-string") or len(jwt) < 16:
+            problems.append("JWT_SECRET must be set to a strong (>= 16 char) random value")
 
         vault = self.vault_master_key.get_secret_value()
         if not vault:

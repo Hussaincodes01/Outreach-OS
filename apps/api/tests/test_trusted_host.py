@@ -1,7 +1,7 @@
 """The API only answers requests addressed to an allowed Host.
 
-There is no login, so a DNS-rebinding page in the operator's browser must not
-be able to reach the API under a hostname it controls. TrustedHostMiddleware
+A DNS-rebinding page in a user's browser must not be able to reach the API
+under a hostname it controls. TrustedHostMiddleware
 rejects any Host not in ALLOWED_HOSTS (default: localhost, 127.0.0.1).
 """
 from __future__ import annotations
@@ -9,6 +9,7 @@ from __future__ import annotations
 import httpx
 
 from outreach_os.core.config import Settings
+from tests.conftest import bearer, signup, unique_email
 
 
 async def test_unknown_host_is_rejected(client: httpx.AsyncClient) -> None:
@@ -19,6 +20,28 @@ async def test_unknown_host_is_rejected(client: httpx.AsyncClient) -> None:
 async def test_unknown_host_is_rejected_on_api_routes(client: httpx.AsyncClient) -> None:
     resp = await client.get("/v1/tenants/me", headers={"Host": "evil.example:8000"})
     assert resp.status_code == 400, resp.text
+
+
+async def test_unknown_host_is_rejected_even_with_a_valid_token(
+    client: httpx.AsyncClient,
+) -> None:
+    acct = await signup(
+        client, email=unique_email(), password="correct-horse-battery-staple", tenant_name="Host"
+    )
+    resp = await client.get(
+        "/v1/tenants/me", headers={"Host": "evil.example", **bearer(acct["access_token"])}
+    )
+    assert resp.status_code == 400, resp.text
+
+
+async def test_allowed_host_with_a_token_reaches_api_routes(client: httpx.AsyncClient) -> None:
+    acct = await signup(
+        client, email=unique_email(), password="correct-horse-battery-staple", tenant_name="Host"
+    )
+    resp = await client.get(
+        "/v1/tenants/me", headers={"Host": "localhost:8000", **bearer(acct["access_token"])}
+    )
+    assert resp.status_code == 200, resp.text
 
 
 async def test_localhost_is_allowed(client: httpx.AsyncClient) -> None:

@@ -8,7 +8,6 @@ from outreach_os.core.llm import set_llm_client
 from outreach_os.core.mailer import SmtpMailer, get_mailer_override, set_mailer_client
 from outreach_os.domain.models.mailbox import Mailbox
 from outreach_os.services import vault_service
-from outreach_os.services.local_workspace import LOCAL_TENANT_ID
 from outreach_os.services.mailbox.transport import mailer_for_mailbox
 from outreach_os.services.send_service import SendService
 from outreach_os.workers.celery_app import celery_app
@@ -17,12 +16,13 @@ from tests.fake_llm import FakeLLMClient
 
 def _smtp_mailbox() -> Mailbox:
     cfg = {"host": "smtp.example.org", "port": 587, "username": "me", "password": "pw", "use_tls": True}
+    tenant_id = uuid.uuid4()
     return Mailbox(
         id=uuid.uuid4(),
-        tenant_id=LOCAL_TENANT_ID,
+        tenant_id=tenant_id,
         provider="smtp",
         email_address="me@example.org",
-        smtp_config_ciphertext=vault_service.encrypt_for_tenant(str(LOCAL_TENANT_ID), cfg),
+        smtp_config_ciphertext=vault_service.encrypt_for_tenant(str(tenant_id), cfg),
     )
 
 
@@ -45,12 +45,14 @@ def test_send_due_is_on_beat_schedule() -> None:
     assert "outreach_os.workers.send_due" in tasks
 
 
-async def test_gmail_oauth_routes_are_gone(client) -> None:
-    assert (await client.get("/v1/mailboxes/oauth/gmail/start")).status_code == 404
-    assert (await client.get("/v1/mailboxes/oauth/outlook/start")).status_code == 404
+async def test_gmail_oauth_routes_are_gone(authed_client) -> None:
+    assert (await authed_client.get("/v1/mailboxes/oauth/gmail/start")).status_code == 404
+    assert (await authed_client.get("/v1/mailboxes/oauth/outlook/start")).status_code == 404
 
 
-async def test_decrypt_failure_marks_send_failed_without_crashing_batch(scoped_session) -> None:
+async def test_decrypt_failure_marks_send_failed_without_crashing_batch(
+    scoped_session, account_tenant_id
+) -> None:
     """A mailbox whose SMTP config can't be decrypted must fail just that
     send (via the existing MailerError failure branch), never raise out of
     execute_due and abort the rest of the batch."""
@@ -65,27 +67,27 @@ async def test_decrypt_failure_marks_send_failed_without_crashing_batch(scoped_s
 
     session = scoped_session
     camp = Campaign(
-        tenant_id=LOCAL_TENANT_ID, name="broken-mailbox-camp",
+        tenant_id=account_tenant_id, name="broken-mailbox-camp",
         style_sample_emails=["Hi {first_name}, this is a test."],
     )
     session.add(camp)
     await session.flush()
     cs = CampaignStep(
-        tenant_id=LOCAL_TENANT_ID, campaign_id=camp.id,
+        tenant_id=account_tenant_id, campaign_id=camp.id,
         step_number=1, delay_days=0, subject_template="Hi",
     )
     session.add(cs)
     # SMTP provider but no stored config at all -> smtp_config() raises MailError.
-    mb = Mailbox(tenant_id=LOCAL_TENANT_ID, provider="smtp", email_address="broken@sender.example")
+    mb = Mailbox(tenant_id=account_tenant_id, provider="smtp", email_address="broken@sender.example")
     session.add(mb)
-    lead = Lead(tenant_id=LOCAL_TENANT_ID, source="serper", email="target@x.example", first_name="T")
+    lead = Lead(tenant_id=account_tenant_id, source="serper", email="target@x.example", first_name="T")
     session.add(lead)
     await session.flush()
-    run = SequenceRun(tenant_id=LOCAL_TENANT_ID, campaign_id=camp.id, name="broken-run")
+    run = SequenceRun(tenant_id=account_tenant_id, campaign_id=camp.id, name="broken-run")
     session.add(run)
     await session.flush()
     step = SequenceStep(
-        tenant_id=LOCAL_TENANT_ID, run_id=run.id, lead_id=lead.id,
+        tenant_id=account_tenant_id, run_id=run.id, lead_id=lead.id,
         campaign_step_id=cs.id, status="pending",
         scheduled_at=datetime.utcnow() - timedelta(seconds=5),
     )
@@ -93,7 +95,7 @@ async def test_decrypt_failure_marks_send_failed_without_crashing_batch(scoped_s
     await session.flush()
 
     svc = SendService(session)
-    sends = await svc.execute_due(tenant_id=LOCAL_TENANT_ID)
+    sends = await svc.execute_due(tenant_id=account_tenant_id)
 
     assert len(sends) == 1
     assert sends[0].status == "failed"

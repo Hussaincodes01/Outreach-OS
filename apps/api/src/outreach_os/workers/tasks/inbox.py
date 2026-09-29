@@ -7,6 +7,7 @@ file list has a single `workers/tasks/inbox.py` (no `_tasks.py` sibling).
 from __future__ import annotations
 
 import logging
+import uuid
 from datetime import datetime
 
 from sqlalchemy import select
@@ -14,7 +15,7 @@ from sqlalchemy import select
 from outreach_os.core.db import get_session_factory, run_worker_task
 from outreach_os.core.tenancy import set_tenant_for_session
 from outreach_os.domain.models.mailbox import Mailbox
-from outreach_os.services.local_workspace import LOCAL_TENANT_ID
+from outreach_os.domain.models.tenant import Tenant
 from outreach_os.services.mailbox.inbox import FetchFn, MarkSeenFn, fetch_unseen, poll_mailbox
 from outreach_os.services.mailbox.inbox import mark_seen as mark_seen_default
 from outreach_os.workers.celery_app import celery_app
@@ -25,9 +26,14 @@ log = logging.getLogger(__name__)
 async def poll_inboxes_async(
     *, fetch: FetchFn | None = None, mark_seen: MarkSeenFn | None = None
 ) -> dict[str, int]:
-    """Poll every active SMTP mailbox in the local workspace for replies.
+    """Poll every active SMTP mailbox of every active workspace for replies.
 
-    Only the mailbox *ids* are selected up front. Each mailbox is then
+    `mailbox` is tenant-scoped (RLS), so the ids are selected one workspace
+    at a time with that workspace bound, and each mailbox is later polled
+    with its *own* workspace bound: a reply can only ever be matched to a
+    send, and filed, inside the workspace that owns the mailbox.
+
+    Only the (tenant, mailbox) *ids* are selected up front. Each mailbox is then
     loaded and polled in its own fresh session, inside its own try/except,
     so a single bad mailbox (unreachable host, rejected login, no IMAP
     settings, a duplicate-triggered rollback, anything else) is logged and
@@ -52,26 +58,37 @@ async def poll_inboxes_async(
     mailboxes = 0
     ingested_total = 0
     errors = 0
+    targets: list[tuple[uuid.UUID, uuid.UUID]] = []
     async with factory() as session:
-        await set_tenant_for_session(session, str(LOCAL_TENANT_ID))
-        mailbox_ids = list(
+        # `tenant` itself is not RLS-protected.
+        tenant_ids = list(
             (
+                await session.execute(
+                    select(Tenant.id).where(Tenant.status == "active").order_by(Tenant.id)
+                )
+            ).scalars().all()
+        )
+    for tenant_id in tenant_ids:
+        # A fresh transaction per workspace: the RLS GUC is transaction-scoped.
+        async with factory() as session, session.begin():
+            await set_tenant_for_session(session, str(tenant_id))
+            ids = (
                 await session.execute(
                     select(Mailbox.id)
                     .where(
-                        Mailbox.tenant_id == LOCAL_TENANT_ID,
+                        Mailbox.tenant_id == tenant_id,
                         Mailbox.provider == "smtp",
                         Mailbox.is_active.is_(True),
                     )
                     .order_by(Mailbox.created_at, Mailbox.id)
                 )
             ).scalars().all()
-        )
+        targets.extend((tenant_id, mailbox_id) for mailbox_id in ids)
 
-    for mailbox_id in mailbox_ids:
+    for tenant_id, mailbox_id in targets:
         try:
             async with factory() as session:
-                await set_tenant_for_session(session, str(LOCAL_TENANT_ID))
+                await set_tenant_for_session(session, str(tenant_id))
                 mailbox = await session.get(Mailbox, mailbox_id)
                 if mailbox is None:
                     # Deleted between selecting the ids and getting here.
@@ -84,7 +101,9 @@ async def poll_inboxes_async(
         except Exception:
             # Mailbox id only (plus the traceback): never the message body or
             # the mailbox's credentials.
-            log.warning("inbox poll failed mailbox=%s", mailbox_id, exc_info=True)
+            log.warning(
+                "inbox poll failed tenant=%s mailbox=%s", tenant_id, mailbox_id, exc_info=True
+            )
             errors += 1
     return {"mailboxes": mailboxes, "ingested": ingested_total, "errors": errors}
 

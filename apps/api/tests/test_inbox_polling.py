@@ -120,21 +120,27 @@ def test_celery_has_task_time_limits_and_beat_entries_expire() -> None:
 # test_phase4_reply.py uses for reply classification.
 
 
-async def _create_sent_send(client, mailbox_payload: dict) -> tuple[str, str]:
+async def _create_sent_send(
+    client, mailbox_payload: dict, *, headers: dict[str, str] | None = None
+) -> tuple[str, str]:
     """Create a mailbox (through the real endpoint) plus an executed Send for
-    the local workspace. The caller must have installed a test LLM client.
+    the signed-in workspace (the client's own Authorization header, or
+    `headers`). The caller must have installed a test LLM client.
     Returns (mailbox_id, message_id_header)."""
+    import uuid
+
     from outreach_os.core.db import get_session_factory
     from outreach_os.core.tenancy import set_tenant_for_session
     from outreach_os.domain.models.lead import Lead
-    from outreach_os.services.local_workspace import LOCAL_TENANT_ID, ensure_local_workspace
     from outreach_os.services.send_service import SendService
     from tests.test_phase4_send import select_sequence_step_for_run
 
-    await ensure_local_workspace()
+    me = await client.get("/v1/tenants/me", headers=headers)
+    assert me.status_code == 200, me.text
+    tenant_id = uuid.UUID(me.json()["id"])
 
     # Mailbox, through the real endpoint, with imap_host set.
-    r = await client.post("/v1/mailboxes/smtp", json=mailbox_payload)
+    r = await client.post("/v1/mailboxes/smtp", json=mailbox_payload, headers=headers)
     assert r.status_code == 201, r.text
     mailbox_id = r.json()["id"]
     assert r.json()["imap_enabled"] is True
@@ -147,6 +153,7 @@ async def _create_sent_send(client, mailbox_payload: dict) -> tuple[str, str]:
             "style_sample_emails": ["Hi {first_name}, this is a test."],
             "steps": [{"step_number": 1, "delay_days": 0, "subject_template": "Quick question"}],
         },
+        headers=headers,
     )
     assert r.status_code == 201, r.text
     campaign_id = r.json()["id"]
@@ -154,9 +161,9 @@ async def _create_sent_send(client, mailbox_payload: dict) -> tuple[str, str]:
     # Lead, seeded directly (no lead-import endpoint used here).
     factory = get_session_factory()
     async with factory() as session, session.begin():
-        await set_tenant_for_session(session, str(LOCAL_TENANT_ID))
+        await set_tenant_for_session(session, str(tenant_id))
         lead = Lead(
-            tenant_id=LOCAL_TENANT_ID, source="serper",
+            tenant_id=tenant_id, source="serper",
             email="pat@prospect.example", first_name="Pat",
         )
         session.add(lead)
@@ -167,36 +174,37 @@ async def _create_sent_send(client, mailbox_payload: dict) -> tuple[str, str]:
     r = await client.post(
         "/v1/sequences",
         json={"campaign_id": campaign_id, "name": "inbox-poll-run", "lead_ids": [lead_id]},
+        headers=headers,
     )
     assert r.status_code == 201, r.text
     run_id = r.json()["id"]
 
     # Force the step due now, then run the send engine directly.
     async with factory() as session, session.begin():
-        await set_tenant_for_session(session, str(LOCAL_TENANT_ID))
+        await set_tenant_for_session(session, str(tenant_id))
         step = (await session.execute(
             select_sequence_step_for_run(run_id)
         )).scalar_one()
         step.scheduled_at = datetime.utcnow() - timedelta(seconds=5)
 
     async with factory() as session, session.begin():
-        await set_tenant_for_session(session, str(LOCAL_TENANT_ID))
+        await set_tenant_for_session(session, str(tenant_id))
         svc = SendService(session)
-        sends = await svc.execute_due(tenant_id=LOCAL_TENANT_ID)
+        sends = await svc.execute_due(tenant_id=tenant_id)
     assert len(sends) == 1
     assert sends[0].status == "sent"
     return str(mailbox_id), str(sends[0].message_id_header)
 
 
 @pytest.fixture
-async def sent_send(client):
+async def sent_send(authed_client):
     from outreach_os.core.llm import set_llm_client
     from tests.fake_llm import FakeLLMClient
 
     set_llm_client(FakeLLMClient())
     try:
         yield await _create_sent_send(
-            client,
+            authed_client,
             {
                 "host": "smtp.example.org",
                 "port": 587,
@@ -210,9 +218,9 @@ async def sent_send(client):
         set_llm_client(None)
 
 
-async def test_poll_ingests_reply_for_real_send(client, sent_send) -> None:
+async def test_poll_ingests_reply_for_real_send(authed_client, sent_send) -> None:
     """`sent_send` fixture: an SMTP mailbox (with imap_host) plus a Send row in
-    status 'sent' for the local workspace, created through the existing phase-4
+    status 'sent' for the signed-in workspace, created through the existing phase-4
     test helpers. Returns (mailbox_id, message_id_header)."""
     from outreach_os.workers.tasks.inbox import poll_inboxes_async
 
@@ -223,14 +231,14 @@ async def test_poll_ingests_reply_for_real_send(client, sent_send) -> None:
         mark_seen=lambda cfg, uids: marked.extend(uids),
     )
     assert summary["ingested"] == 1
-    replies = (await client.get("/v1/replies")).json()
+    replies = (await authed_client.get("/v1/replies")).json()
     items = replies["items"] if isinstance(replies, dict) else replies
     assert any(r["from_email"] == "pat@prospect.example" for r in items)
     # The ingested (and durably committed) message's uid was marked seen.
     assert marked == [b"1"]
 
 
-async def test_poll_rebinds_tenant_after_duplicate_so_later_messages_ingest(client, sent_send) -> None:
+async def test_poll_rebinds_tenant_after_duplicate_so_later_messages_ingest(authed_client, sent_send) -> None:
     """First message is a duplicate (already ingested); ReplyService.ingest
     rolls the session back on the IntegrityError, which also clears the
     transaction-scoped RLS GUC. The second, brand-new message must still
@@ -256,12 +264,12 @@ async def test_poll_rebinds_tenant_after_duplicate_so_later_messages_ingest(clie
         fetch=lambda cfg: [(b"1", dup_raw), (b"2", new_raw)], mark_seen=_noop_mark_seen
     )
     assert summary2["ingested"] == 1  # only the fresh one
-    replies = (await client.get("/v1/replies")).json()
+    replies = (await authed_client.get("/v1/replies")).json()
     items = replies["items"] if isinstance(replies, dict) else replies
     assert any(r["message_id_header"] == "<fresh-reply@prospect.example>" for r in items)
 
 
-async def test_poll_earlier_ingested_reply_survives_a_later_duplicate(client, sent_send) -> None:
+async def test_poll_earlier_ingested_reply_survives_a_later_duplicate(authed_client, sent_send) -> None:
     """Within a single poll pass, an earlier successfully-ingested reply must
     not be discarded when a *later* message in the same batch turns out to be
     a duplicate (ingest()'s rollback must not unwind prior, already-committed
@@ -277,13 +285,13 @@ async def test_poll_earlier_ingested_reply_survives_a_later_duplicate(client, se
         mark_seen=lambda cfg, uids: None,
     )
     assert summary["ingested"] == 1
-    replies = (await client.get("/v1/replies")).json()
+    replies = (await authed_client.get("/v1/replies")).json()
     items = replies["items"] if isinstance(replies, dict) else replies
     assert any(r["message_id_header"] == "<first-reply@prospect.example>" for r in items)
 
 
 async def test_poll_isolates_a_failing_message_and_only_marks_the_others_seen(
-    client, sent_send, monkeypatch
+    authed_client, sent_send, monkeypatch
 ) -> None:
     """One message's classification blowing up (any non-IntegrityError
     exception from deep inside ReplyService.ingest) must not abort the rest
@@ -314,14 +322,14 @@ async def test_poll_isolates_a_failing_message_and_only_marks_the_others_seen(
     assert summary["ingested"] == 1  # only the good one
     assert summary["errors"] == 0  # the mailbox-level guard never saw it
     assert marked == [b"2"]  # the bad message's uid was withheld
-    replies = (await client.get("/v1/replies")).json()
+    replies = (await authed_client.get("/v1/replies")).json()
     items = replies["items"] if isinstance(replies, dict) else replies
     assert any(r["message_id_header"] == "<good-reply@prospect.example>" for r in items)
     assert not any(r["message_id_header"] == "<bad-reply@prospect.example>" for r in items)
 
 
 async def test_poll_skips_unparseable_message_without_marking_it_seen(
-    client, sent_send, monkeypatch
+    authed_client, sent_send, monkeypatch
 ) -> None:
     """A malformed message that makes parse_message raise is skipped (not
     marked seen, so it is retried next poll) while the rest of the batch
@@ -349,12 +357,12 @@ async def test_poll_skips_unparseable_message_without_marking_it_seen(
     )
     assert summary["ingested"] == 1
     assert marked == [b"2"]
-    replies = (await client.get("/v1/replies")).json()
+    replies = (await authed_client.get("/v1/replies")).json()
     items = replies["items"] if isinstance(replies, dict) else replies
     assert any(r["message_id_header"] == "<ok-reply@prospect.example>" for r in items)
 
 
-async def test_poll_mark_seen_failure_does_not_lose_already_ingested_replies(client, sent_send) -> None:
+async def test_poll_mark_seen_failure_does_not_lose_already_ingested_replies(authed_client, sent_send) -> None:
     """If mark_seen blows up (e.g. the IMAP connection drops between
     fetching and flagging), replies already ingested and committed earlier
     in that same poll must still be there -- the failure is isolated to
@@ -375,7 +383,7 @@ async def test_poll_mark_seen_failure_does_not_lose_already_ingested_replies(cli
     # worker's per-mailbox guard), but the reply it already committed
     # before that point is not undone.
     assert summary["errors"] == 1
-    replies = (await client.get("/v1/replies")).json()
+    replies = (await authed_client.get("/v1/replies")).json()
     items = replies["items"] if isinstance(replies, dict) else replies
     assert any(r["message_id_header"] == "<durable-reply@prospect.example>" for r in items)
 
@@ -396,7 +404,7 @@ async def _add_second_imap_mailbox(client) -> str:
     return str(r.json()["id"])
 
 
-async def test_poll_failing_mailbox_does_not_abort_later_mailboxes(client, sent_send) -> None:
+async def test_poll_failing_mailbox_does_not_abort_later_mailboxes(authed_client, sent_send) -> None:
     """C1 regression: the FIRST mailbox polled fails at the mailbox level
     (fetch raises OSError). The rollback that follows must not expire the
     second mailbox's ORM state -- the second mailbox is still polled and its
@@ -405,7 +413,7 @@ async def test_poll_failing_mailbox_does_not_abort_later_mailboxes(client, sent_
     from outreach_os.workers.tasks.inbox import poll_inboxes_async
 
     _mailbox_id, message_id = sent_send
-    await _add_second_imap_mailbox(client)
+    await _add_second_imap_mailbox(authed_client)
     raw = _raw_reply(message_id, message_id="<second-mailbox-reply@prospect.example>")
     calls: list[str] = []
 
@@ -418,7 +426,7 @@ async def test_poll_failing_mailbox_does_not_abort_later_mailboxes(client, sent_
     summary = await poll_inboxes_async(fetch=_fetch, mark_seen=lambda cfg, uids: None)
     assert summary == {"mailboxes": 2, "ingested": 1, "errors": 1}
     assert len(calls) == 2
-    replies = (await client.get("/v1/replies")).json()
+    replies = (await authed_client.get("/v1/replies")).json()
     items = replies["items"] if isinstance(replies, dict) else replies
     assert any(
         r["message_id_header"] == "<second-mailbox-reply@prospect.example>" for r in items
@@ -426,7 +434,7 @@ async def test_poll_failing_mailbox_does_not_abort_later_mailboxes(client, sent_
 
 
 async def test_poll_duplicate_in_first_mailbox_does_not_abort_later_mailboxes(
-    client, sent_send
+    authed_client, sent_send
 ) -> None:
     """C1 regression: the first mailbox's batch contains a duplicate
     Message-ID, which forces ReplyService.ingest's per-message rollback. That
@@ -435,7 +443,7 @@ async def test_poll_duplicate_in_first_mailbox_does_not_abort_later_mailboxes(
     from outreach_os.workers.tasks.inbox import poll_inboxes_async
 
     _mailbox_id, message_id = sent_send
-    await _add_second_imap_mailbox(client)
+    await _add_second_imap_mailbox(authed_client)
     first_raw = _raw_reply(message_id, message_id="<mb1-reply@prospect.example>")
     dup_raw = _raw_reply(message_id, message_id="<mb1-reply@prospect.example>")
     other_raw = _raw_reply(message_id, message_id="<mb2-reply@prospect.example>")
@@ -449,7 +457,7 @@ async def test_poll_duplicate_in_first_mailbox_does_not_abort_later_mailboxes(
 
     summary = await poll_inboxes_async(fetch=_fetch, mark_seen=lambda cfg, uids: None)
     assert summary == {"mailboxes": 2, "ingested": 2, "errors": 0}
-    replies = (await client.get("/v1/replies")).json()
+    replies = (await authed_client.get("/v1/replies")).json()
     items = replies["items"] if isinstance(replies, dict) else replies
     ids = {r["message_id_header"] for r in items}
     assert "<mb1-reply@prospect.example>" in ids
@@ -513,7 +521,7 @@ def test_fetch_unseen_against_real_greenmail_imap() -> None:
     assert fetch_unseen(cfg) == []
 
 
-async def test_poll_inboxes_captures_real_reply_from_greenmail(client) -> None:
+async def test_poll_inboxes_captures_real_reply_from_greenmail(authed_client) -> None:
     """I6: prove IMAP -> ReplyService end to end without an LLM in product code.
 
     A real Send is created through the test helpers (test-only FakeLLMClient
@@ -548,7 +556,7 @@ async def test_poll_inboxes_captures_real_reply_from_greenmail(client) -> None:
     set_llm_client(FakeLLMClient())
     try:
         _mailbox_id, send_message_id = await _create_sent_send(
-            client,
+            authed_client,
             {
                 "host": "localhost",
                 "port": 3025,
@@ -590,7 +598,7 @@ async def test_poll_inboxes_captures_real_reply_from_greenmail(client) -> None:
         summary = await poll_inboxes_async()
         assert summary == {"mailboxes": 1, "ingested": 1, "errors": 0}
 
-        replies = (await client.get("/v1/replies")).json()
+        replies = (await authed_client.get("/v1/replies")).json()
         items = replies["items"] if isinstance(replies, dict) else replies
         matching = [r for r in items if r["message_id_header"] == reply_message_id]
         assert len(matching) == 1
@@ -601,7 +609,7 @@ async def test_poll_inboxes_captures_real_reply_from_greenmail(client) -> None:
         assert await asyncio.to_thread(fetch_unseen, cfg) == []
         summary2 = await poll_inboxes_async()
         assert summary2 == {"mailboxes": 1, "ingested": 0, "errors": 0}
-        replies2 = (await client.get("/v1/replies")).json()
+        replies2 = (await authed_client.get("/v1/replies")).json()
         items2 = replies2["items"] if isinstance(replies2, dict) else replies2
         assert len(items2) == len(items)
     finally:

@@ -14,7 +14,10 @@ def test_every_runtime_dependency_is_pinned_in_the_lock() -> None:
         m.group(1).lower().replace("_", "-")
         for m in re.finditer(r"^([A-Za-z0-9_.\-]+)(?:\[[^\]]*\])?==", lock, re.MULTILINE)
     }
-    for name in ("fastapi", "sqlalchemy", "litellm", "celery", "asyncpg", "gunicorn"):
+    for name in (
+        "fastapi", "sqlalchemy", "litellm", "celery", "asyncpg", "gunicorn",
+        "python-jose", "passlib", "bcrypt",
+    ):
         assert name in pinned, f"{name} not pinned in requirements.lock"
 
 

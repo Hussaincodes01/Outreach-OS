@@ -8,7 +8,6 @@ from outreach_os.core import env_keys
 from outreach_os.core.llm import set_llm_client
 from outreach_os.domain.models.tenant import Tenant
 from outreach_os.services import credential_lookup, llm_credentials
-from outreach_os.services.local_workspace import LOCAL_TENANT_ID
 
 pytestmark = pytest.mark.asyncio
 
@@ -53,24 +52,26 @@ def test_env_credentials_for_keyless_provider_needs_only_base(
     assert creds.api_base == "http://localhost:11434"
 
 
-async def test_resolve_prefers_env(monkeypatch: pytest.MonkeyPatch, scoped_session) -> None:
+async def test_resolve_prefers_env(
+    monkeypatch: pytest.MonkeyPatch, scoped_session, account_tenant_id
+) -> None:
     monkeypatch.setenv("OPENAI_API_KEY", "sk-env")
     set_llm_client(None)
     client = await llm_credentials.resolve_llm_client(
-        scoped_session, tenant_id=LOCAL_TENANT_ID, model="openai/gpt-4o-mini"
+        scoped_session, tenant_id=account_tenant_id, model="openai/gpt-4o-mini"
     )
     assert isinstance(client, llm_credentials.LiteLLMClient)
     assert client._credentials.api_key == "sk-env"  # private field; no public accessor exists
 
 
-async def test_provider_listing_without_key(client: httpx.AsyncClient) -> None:
+async def test_provider_listing_without_key(authed_client: httpx.AsyncClient) -> None:
     """No key anywhere (env or stored) -> the listing shows not-connected.
 
     The 428-on-missing-key behaviour itself is covered by the existing
     test_missing_key_raises_actionable_setup_error in test_byok_credentials.py.
     """
     set_llm_client(None)
-    resp = await client.get("/v1/credentials/providers")
+    resp = await authed_client.get("/v1/credentials/providers")
     assert resp.status_code == 200
     openai = next(p for p in resp.json() if p["provider"] == "openai")
     assert openai["connected"] is False
@@ -79,23 +80,23 @@ async def test_provider_listing_without_key(client: httpx.AsyncClient) -> None:
     assert openai["env_base_var"] == "OPENAI_API_BASE"
 
 
-async def test_provider_listing_reports_env(monkeypatch: pytest.MonkeyPatch, client: httpx.AsyncClient) -> None:
+async def test_provider_listing_reports_env(monkeypatch: pytest.MonkeyPatch, authed_client: httpx.AsyncClient) -> None:
     monkeypatch.setenv("OPENAI_API_KEY", "sk-env")
-    resp = await client.get("/v1/credentials/providers")
+    resp = await authed_client.get("/v1/credentials/providers")
     openai = next(p for p in resp.json() if p["provider"] == "openai")
     assert openai["connected"] is True
     assert openai["configured_via"] == "env"
 
 
 async def test_scraping_keys_from_env(
-    monkeypatch: pytest.MonkeyPatch, scoped_session, client: httpx.AsyncClient
+    monkeypatch: pytest.MonkeyPatch, scoped_session, account_tenant_id, authed_client: httpx.AsyncClient
 ) -> None:
     monkeypatch.setenv("SERPER_API_KEY", "serp-env")
     got = await credential_lookup.get_credential_secrets(
-        scoped_session, tenant_id=LOCAL_TENANT_ID, kinds=["serper", "proxycurl"]
+        scoped_session, tenant_id=account_tenant_id, kinds=["serper", "proxycurl"]
     )
     assert got == {"serper": "serp-env"}
-    listing = (await client.get("/v1/credentials/scraping")).json()
+    listing = (await authed_client.get("/v1/credentials/scraping")).json()
     assert {"kind": "serper", "env_var": "SERPER_API_KEY", "configured": True} in listing
     assert {"kind": "proxycurl", "env_var": "PROXYCURL_API_KEY", "configured": False} in listing
 
@@ -103,19 +104,19 @@ async def test_scraping_keys_from_env(
 # --- POST /v1/credentials/providers/{provider}/test ------------------------
 
 
-async def test_test_unknown_provider_is_404(client: httpx.AsyncClient) -> None:
-    resp = await client.post("/v1/credentials/providers/not-a-real-provider/test")
+async def test_test_unknown_provider_is_404(authed_client: httpx.AsyncClient) -> None:
+    resp = await authed_client.post("/v1/credentials/providers/not-a-real-provider/test")
     assert resp.status_code == 404
 
 
-async def test_test_without_any_key_is_428(client: httpx.AsyncClient) -> None:
+async def test_test_without_any_key_is_428(authed_client: httpx.AsyncClient) -> None:
     """Neither env nor a stored row -> 428, never a fabricated "ok"."""
-    resp = await client.post("/v1/credentials/providers/openai/test")
+    resp = await authed_client.post("/v1/credentials/providers/openai/test")
     assert resp.status_code == 428, resp.text
 
 
 async def test_test_env_key_succeeds_and_is_reflected_in_the_listing(
-    monkeypatch: pytest.MonkeyPatch, client: httpx.AsyncClient
+    monkeypatch: pytest.MonkeyPatch, authed_client: httpx.AsyncClient
 ) -> None:
     """A successful Test stamps tenant.onboarding_state["verified_providers"],
     and the providers listing then reports last_verified_at for that env-
@@ -127,20 +128,20 @@ async def test_test_env_key_succeeds_and_is_reflected_in_the_listing(
 
     monkeypatch.setattr(llm_credentials, "_achat_probe", _fake_probe)
 
-    resp = await client.post("/v1/credentials/providers/openai/test")
+    resp = await authed_client.post("/v1/credentials/providers/openai/test")
     assert resp.status_code == 200, resp.text
     body = resp.json()
     assert body["ok"] is True
     assert body["message"]
 
-    listing = (await client.get("/v1/credentials/providers")).json()
+    listing = (await authed_client.get("/v1/credentials/providers")).json()
     openai = next(p for p in listing if p["provider"] == "openai")
     assert openai["configured_via"] == "env"
     assert openai["last_verified_at"] is not None
 
 
 async def test_test_reports_failure_without_crashing(
-    monkeypatch: pytest.MonkeyPatch, client: httpx.AsyncClient
+    monkeypatch: pytest.MonkeyPatch, authed_client: httpx.AsyncClient
 ) -> None:
     monkeypatch.setenv("OPENAI_API_KEY", "sk-env-bad")
 
@@ -151,18 +152,18 @@ async def test_test_reports_failure_without_crashing(
 
     monkeypatch.setattr(llm_credentials, "_achat_probe", _fake_probe)
 
-    resp = await client.post("/v1/credentials/providers/openai/test")
+    resp = await authed_client.post("/v1/credentials/providers/openai/test")
     assert resp.status_code == 200, resp.text
     body = resp.json()
     assert body["ok"] is False
 
-    listing = (await client.get("/v1/credentials/providers")).json()
+    listing = (await authed_client.get("/v1/credentials/providers")).json()
     openai = next(p for p in listing if p["provider"] == "openai")
     assert openai["last_verified_at"] is None
 
 
 async def test_test_on_a_gateway_provider_does_not_overclaim_verified(
-    monkeypatch: pytest.MonkeyPatch, scoped_session, client: httpx.AsyncClient
+    monkeypatch: pytest.MonkeyPatch, scoped_session, account_tenant_id, authed_client: httpx.AsyncClient
 ) -> None:
     """openai_like has no universal model to probe (verify_model is None), so
     verify_credentials always returns ok=True for it once a key/base is set —
@@ -171,20 +172,20 @@ async def test_test_on_a_gateway_provider_does_not_overclaim_verified(
     monkeypatch.setenv("OPENAI_LIKE_API_KEY", "sk-gw")
     monkeypatch.setenv("OPENAI_LIKE_API_BASE", "https://gateway.example.com/v1")
 
-    resp = await client.post("/v1/credentials/providers/openai_like/test")
+    resp = await authed_client.post("/v1/credentials/providers/openai_like/test")
     assert resp.status_code == 200, resp.text
     body = resp.json()
     assert body["ok"] is True
 
-    listing = (await client.get("/v1/credentials/providers")).json()
+    listing = (await authed_client.get("/v1/credentials/providers")).json()
     gw = next(p for p in listing if p["provider"] == "openai_like")
     assert gw["last_verified_at"] is None
 
-    tenant = await scoped_session.get(Tenant, LOCAL_TENANT_ID)
+    tenant = await scoped_session.get(Tenant, account_tenant_id)
     assert "openai_like" not in ((tenant.onboarding_state or {}).get("verified_providers") or {})
 
     audit = (
-        await client.get(
+        await authed_client.get(
             "/v1/audit", params={"action": "credential.provider.verified"}
         )
     ).json()
@@ -193,7 +194,7 @@ async def test_test_on_a_gateway_provider_does_not_overclaim_verified(
 
 
 async def test_verified_provider_is_not_reported_after_its_env_key_is_removed(
-    monkeypatch: pytest.MonkeyPatch, client: httpx.AsyncClient
+    monkeypatch: pytest.MonkeyPatch, authed_client: httpx.AsyncClient
 ) -> None:
     """A provider counts as verified only while it is still configured (env or
     stored) AND has a verified timestamp. A stale `verified_providers` stamp
@@ -205,10 +206,10 @@ async def test_verified_provider_is_not_reported_after_its_env_key_is_removed(
         return None
 
     monkeypatch.setattr(llm_credentials, "_achat_probe", _fake_probe)
-    resp = await client.post("/v1/credentials/providers/openai/test")
+    resp = await authed_client.post("/v1/credentials/providers/openai/test")
     assert resp.status_code == 200, resp.text
 
-    onboarding = (await client.get("/v1/onboarding")).json()
+    onboarding = (await authed_client.get("/v1/onboarding")).json()
     verified_step = next(s for s in onboarding["steps"] if s["key"] == "llm_verified")
     assert verified_step["done"] is True
 
@@ -216,14 +217,14 @@ async def test_verified_provider_is_not_reported_after_its_env_key_is_removed(
     monkeypatch.delenv("OPENAI_API_KEY")
     env_keys.reset_env_cache()
 
-    onboarding = (await client.get("/v1/onboarding")).json()
+    onboarding = (await authed_client.get("/v1/onboarding")).json()
     verified_step = next(s for s in onboarding["steps"] if s["key"] == "llm_verified")
     llm_step = next(s for s in onboarding["steps"] if s["key"] == "llm_key")
     assert llm_step["done"] is False
     assert verified_step["done"] is False
     assert "verified" not in (llm_step["detail"] or "")
 
-    listing = (await client.get("/v1/credentials/providers")).json()
+    listing = (await authed_client.get("/v1/credentials/providers")).json()
     openai = next(p for p in listing if p["provider"] == "openai")
     assert openai["connected"] is False
     assert openai["last_verified_at"] is None

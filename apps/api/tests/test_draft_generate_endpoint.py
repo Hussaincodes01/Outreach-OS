@@ -17,7 +17,6 @@ from outreach_os.core.db import get_session_factory
 from outreach_os.core.llm import set_llm_client
 from outreach_os.core.s3 import reset_for_tests
 from outreach_os.core.tenancy import set_tenant_for_session
-from outreach_os.services.local_workspace import LOCAL_TENANT_ID
 from tests.fake_llm import FakeLLMClient
 
 
@@ -45,8 +44,9 @@ def broker_mode(monkeypatch: pytest.MonkeyPatch) -> list[tuple]:
 
 
 async def test_generate_returns_the_real_draft_when_celery_is_not_eager(
-    client, broker_mode: list[tuple]
+    authed_client, account_tenant_id, broker_mode: list[tuple]
 ) -> None:
+    client = authed_client
     resp = await client.post(
         "/v1/campaigns",
         json={
@@ -61,9 +61,9 @@ async def test_generate_returns_the_real_draft_when_celery_is_not_eager(
     from outreach_os.domain.models.lead import Lead
 
     async with get_session_factory()() as session, session.begin():
-        await set_tenant_for_session(session, str(LOCAL_TENANT_ID))
+        await set_tenant_for_session(session, str(account_tenant_id))
         lead = Lead(
-            tenant_id=LOCAL_TENANT_ID, source="csv_import", first_name="Dana", email="dana@example.com"
+            tenant_id=account_tenant_id, source="csv_import", first_name="Dana", email="dana@example.com"
         )
         session.add(lead)
         await session.flush()

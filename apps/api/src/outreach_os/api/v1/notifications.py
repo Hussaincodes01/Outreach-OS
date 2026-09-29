@@ -6,19 +6,25 @@
 - GET    /v1/notifications/events           \u2014 master list of event_keys (for the settings UI).
 - WS     /v1/ws/notifications               \u2014 per-tenant real-time channel.
 
-The WebSocket needs no token: every connection joins the single local
-workspace's channel.
+WebSocket auth: clients pass the same JWT they use for HTTP, but in a
+query parameter (`?token=...`). Browsers can't set headers on the
+WebSocket handshake, so the query-string path is the only practical
+option. We validate the token + tenant context the same way we do for
+the HTTP auth dependency.
 """
 from __future__ import annotations
 
 import logging
+import uuid
 from datetime import datetime, timezone
+from typing import Annotated
 
-from fastapi import APIRouter, Depends, Query, WebSocket, WebSocketDisconnect
+from fastapi import APIRouter, Depends, Query, WebSocket, WebSocketDisconnect, status
 from sqlalchemy import func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from outreach_os.api.deps import AuthContext, get_current_user, get_scoped_db
+from outreach_os.core.auth import TokenError, decode_token
 from outreach_os.core.config import get_settings
 from outreach_os.core.ws_manager import get_ws_manager
 from outreach_os.domain.models.notification import Notification
@@ -27,7 +33,6 @@ from outreach_os.domain.schemas.phase6 import (
     NotificationOut,
     NotificationPage,
 )
-from outreach_os.services.local_workspace import LOCAL_TENANT_ID, ensure_local_workspace
 
 logger = logging.getLogger(__name__)
 
@@ -107,7 +112,9 @@ async def unread_count(
 
 
 @router.get("/events")
-async def list_event_keys() -> dict[str, list[str]]:
+async def list_event_keys(
+    _user: AuthContext = Depends(get_current_user),
+) -> dict[str, list[str]]:
     """Master list of all event keys. The UI uses this to render the
     preference matrix in /settings."""
     return {"events": list(get_settings().notification_event_keys)}
@@ -135,19 +142,40 @@ async def mark_read(
 
 
 @router.websocket("/ws")
-async def notifications_ws(websocket: WebSocket) -> None:
-    """Live notification feed for the local workspace.
+async def notifications_ws(
+    websocket: WebSocket,
+    token: Annotated[str | None, Query()] = None,
+) -> None:
+    """Per-tenant live notification feed.
 
-    We don't set the RLS GUC on the WebSocket path \u2014 the channel is
-    just a fan-out; no DB reads happen here beyond creating the workspace.
+    Query: ?token=<jwt>
+
+    The token must include a `tid` claim matching a tenant the user
+    belongs to. We don't set the RLS GUC on the WebSocket path \u2014 the
+    channel is just a fan-out; no DB reads happen here.
     """
-    await ensure_local_workspace()
-    tenant_id = LOCAL_TENANT_ID
+    if not token:
+        await websocket.close(code=status.WS_1008_POLICY_VIOLATION)
+        return
+    try:
+        payload = decode_token(token, expected_type="access")
+    except TokenError:
+        await websocket.close(code=status.WS_1008_POLICY_VIOLATION)
+        return
+    tid_str = payload.get("tid")
+    if not tid_str:
+        await websocket.close(code=status.WS_1008_POLICY_VIOLATION)
+        return
+    try:
+        tenant_id = uuid.UUID(tid_str)
+    except ValueError:
+        await websocket.close(code=status.WS_1008_POLICY_VIOLATION)
+        return
 
     manager = get_ws_manager()
     await manager.connect(tenant_id, websocket)
     try:
-        # Send a hello so the client knows it's connected.
+        # Send a hello so the client knows it's authenticated + connected.
         await websocket.send_json({"event_key": "ws.connected", "title": "connected"})
         while True:
             # We don't expect any inbound messages, but the receive is

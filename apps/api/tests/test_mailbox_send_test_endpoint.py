@@ -17,8 +17,8 @@ from __future__ import annotations
 import pytest
 
 
-async def _create_mailbox(client) -> str:
-    r = await client.post(
+async def _create_mailbox(authed_client) -> str:
+    r = await authed_client.post(
         "/v1/mailboxes/smtp",
         json={
             "host": "smtp.example.org",
@@ -33,11 +33,11 @@ async def _create_mailbox(client) -> str:
 
 
 async def test_send_test_response_serializes(
-    client, monkeypatch: pytest.MonkeyPatch
+    authed_client, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """The exact shape the real mailer returns on success must survive
     FastAPI's response validation instead of 500ing."""
-    mailbox_id = await _create_mailbox(client)
+    mailbox_id = await _create_mailbox(authed_client)
 
     async def _fake_send_test_email(*args, **kwargs):
         return {"ok": True, "message": "sent via SMTP smtp.example.org:587"}
@@ -47,7 +47,7 @@ async def test_send_test_response_serializes(
         _fake_send_test_email,
     )
 
-    r = await client.post(
+    r = await authed_client.post(
         f"/v1/mailboxes/{mailbox_id}/send-test",
         json={"to": "prospect@example.com"},
     )
@@ -57,13 +57,13 @@ async def test_send_test_response_serializes(
 
 
 async def test_send_test_mail_error_still_maps_to_502(
-    client, monkeypatch: pytest.MonkeyPatch
+    authed_client, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """The existing MailError -> 502 mapping must be unaffected by the
     response-model change."""
     from outreach_os.core.errors import MailError
 
-    mailbox_id = await _create_mailbox(client)
+    mailbox_id = await _create_mailbox(authed_client)
 
     async def _fake_send_test_email(*args, **kwargs):
         raise MailError("SMTP send failed: connection refused")
@@ -73,7 +73,7 @@ async def test_send_test_mail_error_still_maps_to_502(
         _fake_send_test_email,
     )
 
-    r = await client.post(
+    r = await authed_client.post(
         f"/v1/mailboxes/{mailbox_id}/send-test",
         json={"to": "prospect@example.com"},
     )

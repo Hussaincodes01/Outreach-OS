@@ -179,7 +179,7 @@ async def test_unqualified_model_name_is_rejected(client) -> None:
 
 
 async def test_models_of_a_provider_keyed_in_env_are_available(
-    client, monkeypatch: pytest.MonkeyPatch
+    authed_client, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """A key in .env is a connected key. The model picker must not grey out its
     models just because no credential row exists."""
@@ -188,7 +188,7 @@ async def test_models_of_a_provider_keyed_in_env_are_available(
     monkeypatch.setenv("GROQ_API_KEY", "gsk-env-test")
     env_keys.reset_env_cache()
 
-    resp = await client.get("/v1/onboarding/llm-settings")
+    resp = await authed_client.get("/v1/onboarding/llm-settings")
     assert resp.status_code == 200, resp.text
     availability = {m["provider"]: m["available"] for m in resp.json()["models"]}
     assert availability["groq"] is True
@@ -196,7 +196,7 @@ async def test_models_of_a_provider_keyed_in_env_are_available(
 
 
 async def test_env_keyed_compatible_endpoint_accepts_custom_models(
-    client, monkeypatch: pytest.MonkeyPatch
+    authed_client, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """A gateway configured only through .env must still let the user type a
     model name, or it cannot be selected at all."""
@@ -206,7 +206,7 @@ async def test_env_keyed_compatible_endpoint_accepts_custom_models(
     monkeypatch.setenv("OPENAI_LIKE_API_BASE", "https://gateway.example.com/v1")
     env_keys.reset_env_cache()
 
-    resp = await client.get("/v1/onboarding/llm-settings")
+    resp = await authed_client.get("/v1/onboarding/llm-settings")
     assert resp.status_code == 200, resp.text
     assert "openai_like" in resp.json()["custom_model_providers"]
 

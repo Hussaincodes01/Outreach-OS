@@ -72,10 +72,15 @@ async def _stream_tenant_data(tenant_id: uuid.UUID) -> AsyncIterator[bytes]:
 
             for row in rows.fetchall():
                 data = dict(row._mapping)
-                # Convert UUIDs and datetimes to strings
+                # Convert UUIDs and datetimes to strings, and binary columns
+                # (audit hash chain, encrypted secrets) to hex: json.dumps
+                # cannot encode bytes, and every signed-up workspace has
+                # audit rows from its first request.
                 for k, v in data.items():
                     if isinstance(v, (uuid.UUID, datetime)):
                         data[k] = str(v)
+                    elif isinstance(v, (bytes, memoryview)):
+                        data[k] = bytes(v).hex()
                 yield (json.dumps({"table": table, "data": data}) + "\n").encode()
 
 
