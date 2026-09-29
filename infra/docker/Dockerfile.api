@@ -20,10 +20,18 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libpq-dev \
     && rm -rf /var/lib/apt/lists/*
 
-COPY apps/api ./apps/api
-
+# Third-party deps come from the fully pinned lock and are installed BEFORE any
+# application source is copied, so editing code never re-downloads them. Only
+# apps/api/requirements.lock invalidates this layer (regenerate it with
+# `pip-compile --extra prod --output-file requirements.lock pyproject.toml`).
+COPY apps/api/requirements.lock ./requirements.lock
 RUN pip install --upgrade pip && \
-    pip install --prefix=/install "./apps/api[prod]"
+    pip install --prefix=/install -r requirements.lock
+
+# The application itself, without re-resolving dependencies.
+COPY apps/api/pyproject.toml apps/api/README.md ./apps/api/
+COPY apps/api/src ./apps/api/src
+RUN pip install --prefix=/install --no-deps "./apps/api"
 
 # Stage 2: runtime
 FROM python:3.11-slim AS runtime

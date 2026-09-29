@@ -52,6 +52,7 @@ dev = [
     "freezegun>=1.4,<2.0",
     "ruff>=0.4,<1.0",
     "mypy>=1.8,<2.0",
+    "pip-tools>=7.4,<8",
 ]
 
 [tool.hatch.build.targets.wheel]

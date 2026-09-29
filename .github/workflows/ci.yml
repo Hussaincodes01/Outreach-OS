@@ -75,6 +75,17 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           pip install -e ".[dev]"
+      # The Docker image installs requirements.lock, so it must match
+      # pyproject.toml. Recompile starting from the committed pins (so only a
+      # real dependency change, not a new upstream release, shows up) and fail
+      # if the result differs. Regenerate with:
+      #   pip-compile --extra prod --output-file requirements.lock pyproject.toml
+      - name: Check requirements.lock is up to date
+        shell: bash
+        run: |
+          cp requirements.lock /tmp/lock
+          pip-compile --extra prod --output-file /tmp/lock pyproject.toml
+          diff <(grep -v '^#' requirements.lock) <(grep -v '^#' /tmp/lock)
       # Reuse the same bootstrap SQL the dev/prod containers run via
       # /docker-entrypoint-initdb.d, so CI, local and production agree on the
       # role and grant topology instead of drifting.
