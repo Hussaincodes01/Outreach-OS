@@ -22,10 +22,10 @@ npm start                              # docker compose up -d --build
 ```
 
 `npm start` is `docker compose up -d --build` against the root
-`docker-compose.yml`. It starts `postgres`, `redis`, `minio`, a one-shot
+`docker-compose.yml`. It starts `postgres`, `redis`, `rustfs`, a one-shot
 `migrate`, then `api`, `worker`, `beat`, and `web`. Only `api` (8000) and
 `web` (3000) are published to the host, and only on `BIND_ADDRESS` (default
-`127.0.0.1`, so localhost only); Postgres, Redis and MinIO stay on the
+`127.0.0.1`, so localhost only); Postgres, Redis and RustFS stay on the
 internal Docker network.
 
 The API also rejects any request whose `Host` header isn't in
@@ -294,7 +294,7 @@ alongside, but not in the same place.
   docker compose down -v
   ```
 
-  This deletes the `postgres-data`, `redis-data` and `minio-data` volumes,
+  This deletes the `postgres-data`, `redis-data` and `rustfs-data` volumes,
   i.e. every lead, draft, send, reply, stored credential and object. It
   cannot be undone, so take a backup first if you might want the data back.
   Provider keys in `.env` are untouched; delete them there yourself.
@@ -311,7 +311,7 @@ Honest gaps, so nobody assumes otherwise:
   `--forwarded-allow-ips=*`, which is only safe behind a proxy you control.
 - **Bundled Postgres credentials are `outreach`/`outreach`.** Fine on an
   internal Docker network, not for a database exposed elsewhere. Use a
-  managed database and drop the `postgres`/`redis`/`minio` services from the
+  managed database and drop the `postgres`/`redis`/`rustfs` services from the
   compose file if you need that.
 - **No monitoring.** `SENTRY_DSN` is unset by default; nothing scrapes metrics.
 - **The CRM (Google Sheets) and calendar provider clients are stubs.** The

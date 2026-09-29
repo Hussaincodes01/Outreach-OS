@@ -1,6 +1,6 @@
-"""S3 client — MinIO-compatible, with presigned-URL helpers.
+"""S3 client — S3-compatible, with presigned-URL helpers.
 
-We use boto3 with the MinIO endpoint configured in settings. Buckets are
+We use boto3 with the S3 endpoint configured in settings. Buckets are
 auto-created on first use. The drafts bucket is separate from the general
 S3 bucket so we can apply different lifecycle policies later.
 

@@ -36,42 +36,26 @@ services:
       timeout: 3s
       retries: 10
 
-  minio:
-    # Docker Hub no longer serves minio/minio or minio/mc for anonymous pulls
-    # ("repository does not exist"); MinIO now publishes those images only to
-    # quay.io. Pinned to the same verified release tag as the root
-    # docker-compose.yml.
-    image: quay.io/minio/minio:RELEASE.2025-04-22T22-12-26Z
-    container_name: outreach-minio
+  rustfs:
+    # RustFS: S3-compatible object storage (MinIO's community images are no
+    # longer pullable anonymously). Listens for S3 on 9000, console on 9001.
+    # The app creates missing buckets itself (core.s3.ensure_bucket).
+    image: rustfs/rustfs:1.0.0
+    container_name: outreach-rustfs
     restart: unless-stopped
-    command: server /data --console-address ":9001"
     environment:
-      MINIO_ROOT_USER: minioadmin
-      MINIO_ROOT_PASSWORD: minioadmin
+      RUSTFS_ACCESS_KEY: minioadmin
+      RUSTFS_SECRET_KEY: minioadmin
     ports:
       - "9000:9000"
       - "9001:9001"
     volumes:
-      - minio-data:/data
+      - rustfs-data:/data
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      test: ["CMD", "curl", "-f", "http://localhost:9000/health"]
       interval: 10s
       timeout: 5s
       retries: 10
-
-  minio-init:
-    # Pinned to a release tag verified with `docker pull`.
-    image: quay.io/minio/mc:RELEASE.2025-04-16T18-13-26Z
-    container_name: outreach-minio-init
-    depends_on:
-      minio:
-        condition: service_healthy
-    entrypoint: >
-      /bin/sh -c "
-      mc alias set local http://minio:9000 minioadmin minioadmin &&
-      mc mb --ignore-existing local/outreach &&
-      mc anonymous set download local/outreach || true
-      "
 
   greenmail:
     image: greenmail/standalone:2.1.2
@@ -87,4 +71,4 @@ services:
 volumes:
   postgres-data:
   redis-data:
-  minio-data:
+  rustfs-data:

@@ -98,16 +98,14 @@ jobs:
           done
 
       # The draft pipeline stores rendered bodies in object storage, so the
-      # tests need an S3-compatible endpoint. MinIO needs `server /data` args,
-      # which `services:` cannot express — run it as a step instead.
-      - name: Start MinIO (S3-compatible object storage)
+      # tests need an S3-compatible endpoint. Run RustFS as a step (MinIO's
+      # images are no longer pullable anonymously).
+      - name: Start RustFS (S3-compatible object storage)
         working-directory: .
         run: |
-          docker run -d --name minio -p 9000:9000 \
-            -e MINIO_ROOT_USER=minioadmin -e MINIO_ROOT_PASSWORD=minioadmin \
-            quay.io/minio/minio:RELEASE.2025-04-22T22-12-26Z server /data
+          docker run -d --name rustfs -p 9000:9000             -e RUSTFS_ACCESS_KEY=minioadmin -e RUSTFS_SECRET_KEY=minioadmin             rustfs/rustfs:1.0.0
           for i in $(seq 1 30); do
-            curl -fsS http://localhost:9000/minio/health/live && break
+            curl -fsS http://localhost:9000/health && break
             sleep 2
           done
       - name: Lint

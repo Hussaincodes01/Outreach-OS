@@ -118,7 +118,7 @@ This starts, via `infra/docker/docker-compose.dev.yml`:
 | --- | --- |
 | Postgres | `5433` |
 | Redis | `6380` |
-| MinIO (S3 API / console) | `9000` / `9001` |
+| RustFS (S3 API / console) | `9000` / `9001` |
 | GreenMail (SMTP / IMAP) | `3025` / `3143` |
 
 These ports are deliberately non-default so the dev stack can run alongside
@@ -158,7 +158,7 @@ npm install
 
 API — requires the dev infrastructure (`npm run dev:infra`) to be running:
 the suite exercises real PostgreSQL RLS, and several tests (draft storage,
-inbox polling, sequence-send) need the dev MinIO on host port `9000` too —
+inbox polling, sequence-send) need the dev RustFS on host port `9000` too —
 if it's stopped, those tests fail with `EndpointConnectionError` against
 `localhost:9000`, not a code bug.
 

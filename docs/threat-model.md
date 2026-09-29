@@ -90,7 +90,7 @@ the only supported mailbox transport now); nothing writes to it.
 - There is **no in-app erasure endpoint.** An unauthenticated delete of the
   only workspace would let anyone who reaches the API silently stop all
   sending. Wiping all data is an operator action on the host:
-  `docker compose down -v` removes the Postgres, Redis and MinIO volumes.
+  `docker compose down -v` removes the Postgres, Redis and RustFS volumes.
 
 ## Out of scope for this build
 

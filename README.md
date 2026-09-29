@@ -82,7 +82,7 @@ after `npm run setup` creates it.
 - **Self-serve onboarding** derived from live workspace state, so the
   checklist can't go stale.
 - **One command to run it all** — `npm start` brings up Postgres, Redis,
-  MinIO, the API, worker, beat and the web app.
+  RustFS, the API, worker, beat and the web app.
 
 ## Mailboxes
 
@@ -120,7 +120,7 @@ scripts         Setup, the e2e smoke test, and other automation
 | Frontend | Next.js 14 App Router, React, Tailwind CSS |
 | Database | PostgreSQL 16, pgvector, RLS policies (bound to one local workspace) |
 | Queue/cache | Redis, Celery (worker + beat) |
-| Object storage | MinIO / S3-compatible storage |
+| Object storage | RustFS / S3-compatible storage |
 | Email | SMTP for sending, IMAP polling + an inbound webhook for replies; GreenMail in local/e2e testing |
 | AI | LiteLLM across 13 providers, keys read from `.env` |
 | Agent | LangGraph pipeline with a tool-calling research loop |

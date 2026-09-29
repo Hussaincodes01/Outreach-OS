@@ -18,7 +18,7 @@ Summary of the layer choices and the invariants the test suite enforces.
 | Server state | TanStack Query v5 | Caching, mutations, optimistic updates. |
 | Forms | react-hook-form + zod | Validation matches our Pydantic schemas. |
 | Secrets | Per-workspace Fernet DEK from a master KEK (`VAULT_MASTER_KEY`) | Wraps mailbox passwords and any provider key stored via the app. |
-| Object storage | S3-compatible (MinIO) | Draft bodies, exports, attachments. |
+| Object storage | S3-compatible (RustFS in dev/CI) | Draft bodies, exports, attachments. |
 | Email out | The mailbox's own SMTP credentials | Never a shared platform mailer or the operator's own IPs. |
 | Email in | IMAP polling of the mailbox's inbox, plus an inbound webhook | Two independent paths to the same `ReplyService.ingest`. |
 
