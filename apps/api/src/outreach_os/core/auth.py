@@ -114,14 +114,21 @@ def create_access_token(*, user_id: str, tenant_id: str, role: str = "member") -
     )
 
 
-def create_refresh_token(*, user_id: str, tenant_id: str, role: str = "member") -> str:
+def create_refresh_token(
+    *, user_id: str, tenant_id: str, role: str = "member", password_hash: str
+) -> str:
+    """Long-lived token bound to the password it was issued under.
+
+    Carries the same password fingerprint as reset tokens, so changing the
+    password (reset or otherwise) revokes every outstanding refresh token.
+    """
     settings = get_settings()
     return _build_token(
         sub=user_id,
         tenant_id=tenant_id,
         token_type="refresh",
         ttl=timedelta(days=settings.jwt_refresh_ttl_days),
-        extra={"role": role},
+        extra={"role": role, "pfp": _password_fingerprint(password_hash)},
     )
 
 
@@ -192,6 +199,12 @@ def decode_password_reset_token(token: str, *, password_hash: str) -> dict[str, 
     if claims.get("pfp") != _password_fingerprint(password_hash):
         raise TokenError("this reset link has already been used or has expired")
     return claims
+
+
+def check_refresh_token_fingerprint(claims: dict[str, Any], *, password_hash: str) -> None:
+    """Reject a (decoded) refresh token issued before the password changed."""
+    if claims.get("pfp") != _password_fingerprint(password_hash):
+        raise TokenError("refresh token has been revoked")
 
 
 def create_email_verification_token(*, user_id: str, tenant_id: str, email: str) -> str:

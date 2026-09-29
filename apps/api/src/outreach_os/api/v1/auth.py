@@ -11,12 +11,14 @@ from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from outreach_os.api.deps import get_current_user, get_db, get_scoped_db
 from outreach_os.core.audit import write_audit_event
 from outreach_os.core.auth import (
     TokenError,
+    check_refresh_token_fingerprint,
     create_access_token,
     create_email_verification_token,
     create_password_reset_token,
@@ -47,6 +49,8 @@ from outreach_os.domain.schemas.user import UserOut
 from outreach_os.services import account_email, tenant_service, user_service
 
 router = APIRouter(prefix="/auth", tags=["auth"])
+
+_EMAIL_TAKEN = "an account with this email already exists"
 
 
 def _settings() -> Settings:
@@ -93,6 +97,14 @@ async def signup(
     if not decision.allowed:
         _raise_429(decision)
 
+    # One account per email address. Login and password reset resolve the
+    # address across every workspace, so a second account with the same email
+    # would make both land on an arbitrary one. The cross-tenant lookup is the
+    # SECURITY DEFINER function (bypasses RLS); the unique index on
+    # lower(email) backs it up against a concurrent signup (see below).
+    if await user_service.lookup_user_by_email(db, payload.email) is not None:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=_EMAIL_TAKEN)
+
     new_tenant_id = uuid.uuid4()
 
     # Slug uniqueness check (tenant table has no RLS, runs cleanly).
@@ -115,19 +127,30 @@ async def signup(
         tenant_id=new_tenant_id,
     )
 
-    user = await user_service.create_user(
-        db,
-        tenant_id=tenant.id,
-        email=payload.email,
-        password=payload.password,
-        role=UserRole.OWNER,
-    )
+    try:
+        user = await user_service.create_user(
+            db,
+            tenant_id=tenant.id,
+            email=payload.email,
+            password=payload.password,
+            role=UserRole.OWNER,
+        )
+    except IntegrityError as exc:
+        # Lost a race with a concurrent signup for the same address: the
+        # pre-check passed, the unique index did not. Raising rolls back the
+        # whole transaction, including the tenant row created above.
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT, detail=_EMAIL_TAKEN
+        ) from exc
 
     access = create_access_token(
         user_id=str(user.id), tenant_id=str(tenant.id), role=user.role
     )
     refresh = create_refresh_token(
-        user_id=str(user.id), tenant_id=str(tenant.id), role=user.role
+        user_id=str(user.id),
+        tenant_id=str(tenant.id),
+        role=user.role,
+        password_hash=user.password_hash,
     )
 
     await write_audit_event(
@@ -210,7 +233,10 @@ async def login(
         user_id=str(user_id), tenant_id=str(tenant_id), role=role
     )
     refresh = create_refresh_token(
-        user_id=str(user_id), tenant_id=str(tenant_id), role=role
+        user_id=str(user_id),
+        tenant_id=str(tenant_id),
+        role=role,
+        password_hash=user.password_hash,
     )
 
     await write_audit_event(
@@ -235,7 +261,15 @@ async def login(
 async def refresh(
     request: Request,
     payload: RefreshRequest,
+    db: AsyncSession = Depends(get_db),
 ) -> AccessTokenResponse:
+    """Mint a new access token from a refresh token.
+
+    The refresh token alone is not enough: the user must still exist, still
+    be active, and still have the password the token was issued under, so a
+    password reset or a deactivation revokes it immediately rather than at
+    the end of its 30-day lifetime.
+    """
     # Rate limit: 30 refreshes/min per IP
     decision = _rate_limit(request, "refresh")
     if not decision.allowed:
@@ -243,15 +277,30 @@ async def refresh(
 
     try:
         claims = decode_token(payload.refresh_token, expected_type="refresh")
+        user_id = uuid.UUID(str(claims["sub"]))
+        tenant_id = uuid.UUID(str(claims["tid"]))
+    except (TokenError, ValueError) as exc:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED, detail=str(exc)
+        ) from exc
+
+    await set_tenant_for_session(db, str(tenant_id))
+    user = await db.get(AppUser, user_id)
+    if user is None or not user.is_active:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED, detail="refresh token has been revoked"
+        )
+    try:
+        check_refresh_token_fingerprint(claims, password_hash=user.password_hash)
     except TokenError as exc:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED, detail=str(exc)
         ) from exc
 
     access = create_access_token(
-        user_id=str(claims["sub"]),
-        tenant_id=str(claims["tid"]),
-        role=str(claims.get("role", "member")),
+        user_id=str(user.id),
+        tenant_id=str(user.tenant_id),
+        role=user.role,
     )
     return AccessTokenResponse(
         access_token=access, expires_in=_settings().jwt_access_ttl_minutes * 60

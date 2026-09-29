@@ -191,6 +191,7 @@ def test_notifications_websocket_rejects_a_refresh_token() -> None:
     token = create_refresh_token(
         user_id="00000000-0000-0000-0000-000000000001",
         tenant_id="00000000-0000-0000-0000-000000000002",
+        password_hash="!",
     )
     with pytest.raises(WebSocketDisconnect), TestClient(app).websocket_connect(
         f"/v1/notifications/ws?token={token}"
